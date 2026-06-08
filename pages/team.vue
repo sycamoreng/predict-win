@@ -11,11 +11,14 @@ const saving = ref<string | null>(null)
 const loading = ref(true)
 const pickError = ref('')
 const confirmTeam = ref<any | null>(null)
+const showGuestModal = ref(false)
 
 const showSavingsModal = ref(false)
+const showSavingsTerms = ref(false)
 const savingsAmount = ref(2000)
 const savingsDuration = ref(30)
 const savingsConsent = ref(false)
+const savingsTermsAccepted = ref(false)
 const savingsLoading = ref(false)
 const savingsError = ref('')
 
@@ -27,7 +30,12 @@ const load = async () => {
   loading.value = false
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  if (isGuest.value) {
+    showGuestModal.value = true
+  }
+})
 
 const hasTeam = computed(() => !!user.value?.backed_team_id)
 const teamIsEliminated = computed(() => {
@@ -262,7 +270,7 @@ const backedTeamWins = computed(() => (user.value as any)?.backed_team_wins || 0
 
       <button
         v-else
-        @click="showSavingsModal = true"
+        @click="showSavingsTerms = true"
         class="mt-4 btn-primary text-sm px-5 py-2.5"
       >
         Enable Auto-Savings
@@ -355,6 +363,70 @@ const backedTeamWins = computed(() => (user.value as any)?.backed_team_wins || 0
       </div>
     </Teleport>
 
+    <!-- Auto-Savings Terms & Conditions Modal -->
+    <Teleport to="body">
+      <div v-if="showSavingsTerms" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+        <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[90vh] flex flex-col">
+          <div class="p-6 sm:p-8 border-b border-ink-100 shrink-0">
+            <h3 class="text-xl font-extrabold text-ink-900">Auto-Savings Terms &amp; Conditions</h3>
+            <p class="text-sm text-ink-500 mt-1">Please read and accept before proceeding.</p>
+          </div>
+          <div class="flex-1 overflow-y-auto p-6 sm:p-8 space-y-4 text-sm text-ink-700 leading-relaxed">
+            <p class="font-bold text-ink-900">Sycamore Savings Product Policies</p>
+            <p>The World Cup 2026 Auto-Savings feature is a real savings product provided by <a href="https://sycamore.ng" target="_blank" class="text-sky-700 font-bold">Sycamore</a>. By enabling this feature, the following terms apply:</p>
+
+            <div class="space-y-3">
+              <div class="p-3 rounded-xl bg-ink-50">
+                <p class="font-bold text-ink-900 text-xs uppercase tracking-wider mb-1">Lock Period</p>
+                <p>All savings created through this feature are subject to a <strong>minimum 10-day lock period</strong>. During this time, you cannot withdraw or access the saved funds. Your chosen duration (30, 60, or 90 days) will apply on top of this minimum.</p>
+              </div>
+
+              <div class="p-3 rounded-xl bg-ink-50">
+                <p class="font-bold text-ink-900 text-xs uppercase tracking-wider mb-1">Automatic Deductions</p>
+                <p>Each time your backed team wins a match, the specified amount will be automatically moved from your Sycamore current account into a locked savings plan. If your balance is insufficient, the deduction will be skipped with no penalty.</p>
+              </div>
+
+              <div class="p-3 rounded-xl bg-ink-50">
+                <p class="font-bold text-ink-900 text-xs uppercase tracking-wider mb-1">Early Withdrawal</p>
+                <p>You may request an early withdrawal after the 10-day minimum lock period. Early withdrawals before your chosen duration may forfeit accrued interest. Standard Sycamore withdrawal policies apply.</p>
+              </div>
+
+              <div class="p-3 rounded-xl bg-ink-50">
+                <p class="font-bold text-ink-900 text-xs uppercase tracking-wider mb-1">Disabling Auto-Savings</p>
+                <p>You can disable auto-savings at any time from your Team page. Disabling stops future deductions but does not affect funds already saved. Existing savings continue under their original lock period.</p>
+              </div>
+
+              <div class="p-3 rounded-xl bg-ink-50">
+                <p class="font-bold text-ink-900 text-xs uppercase tracking-wider mb-1">Governing Policies</p>
+                <p>This savings product is governed by <a href="https://sycamore.ng" target="_blank" class="text-sky-700 font-bold">Sycamore's</a> standard savings terms, interest rate policies, and regulatory requirements. By proceeding, you acknowledge and accept all applicable Sycamore policies.</p>
+              </div>
+            </div>
+          </div>
+          <div class="p-6 sm:p-8 border-t border-ink-100 shrink-0 space-y-4">
+            <label class="flex items-start gap-3 cursor-pointer">
+              <input v-model="savingsTermsAccepted" type="checkbox" class="mt-0.5 w-4 h-4 rounded border-ink-300 text-sky-600 focus:ring-sky-500" />
+              <span class="text-sm text-ink-700">I have read and accept the Auto-Savings Terms &amp; Conditions and Sycamore's savings policies.</span>
+            </label>
+            <div class="flex gap-3">
+              <button
+                @click="showSavingsTerms = false; showSavingsModal = true"
+                :disabled="!savingsTermsAccepted"
+                class="btn-primary flex-1 py-3 text-sm"
+              >
+                Continue
+              </button>
+              <button
+                @click="showSavingsTerms = false; savingsTermsAccepted = false"
+                class="btn-secondary flex-1 py-3 text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- Auto-Savings Consent Modal -->
     <Teleport to="body">
       <div v-if="showSavingsModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
@@ -425,5 +497,58 @@ const backedTeamWins = computed(() => (user.value as any)?.backed_team_wins || 0
       </div>
     </Teleport>
     </template>
+
+    <!-- Guest welcome modal -->
+    <Teleport to="body">
+      <div v-if="showGuestModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+        <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 sm:p-8 space-y-5 text-center">
+          <div class="w-14 h-14 rounded-2xl bg-sky-100 mx-auto grid place-items-center">
+            <svg class="w-7 h-7 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+          </div>
+          <h3 class="text-xl font-extrabold text-ink-900">Welcome!</h3>
+          <p class="text-sm text-ink-600 leading-relaxed">
+            You're signed in, but we don't have a Sycamore account linked to your email yet.
+          </p>
+          <div class="rounded-xl bg-sun-50 border border-sun-200 p-4 text-xs text-sun-800 leading-relaxed">
+            <p class="font-bold mb-1">Important:</p>
+            <p>When you sign up on the Sycamore app, use the same email you signed in with here (<span class="font-mono font-bold">{{ user?.email }}</span>) so your predictions sync automatically.</p>
+          </div>
+          <div class="text-left rounded-xl bg-ink-50 p-4 space-y-2 text-xs text-ink-600">
+            <p class="font-semibold text-ink-900">As a guest you can:</p>
+            <ul class="list-disc pl-4 space-y-1">
+              <li>Make predictions on all matches</li>
+              <li>Track your picks</li>
+            </ul>
+            <p class="font-semibold text-ink-900 pt-2">To unlock everything:</p>
+            <ul class="list-disc pl-4 space-y-1">
+              <li>Appear on the leaderboard</li>
+              <li>Back a team and earn win bonuses</li>
+              <li>Win cash prizes</li>
+            </ul>
+          </div>
+          <p class="text-xs text-ink-500">
+            Download the Sycamore app and sign up with <span class="font-bold">{{ user?.email }}</span>. Once your account is verified, everything syncs automatically.
+          </p>
+          <div class="grid gap-2">
+            <a
+              href="https://appsflyer.sycamore.ng/Qthc/worldcup_website"
+              target="_blank"
+              rel="noreferrer"
+              class="btn-primary w-full text-sm py-3 text-center"
+            >
+              Get the Sycamore App
+            </a>
+            <button
+              @click="showGuestModal = false"
+              class="btn-secondary w-full text-sm py-3"
+            >
+              Continue as guest
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>

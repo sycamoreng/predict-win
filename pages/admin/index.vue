@@ -350,9 +350,14 @@ const csvCell = (v: unknown) => {
 
 const downloadCsv = (filename: string, rows: any[]) => {
   if (!rows.length) return
-  const headers = ['rank', 'name', 'email', 'account_number', 'phone_number', 'week_points', 'exact_scorelines', 'correct_predictions', 'matches_scored']
+  const headers = ['rank', 'username', 'name', 'email', 'account_number', 'phone_number', 'twitter', 'instagram', 'threads', 'tiktok', 'week_points', 'exact_scorelines', 'correct_predictions', 'matches_scored']
   const csv = [headers.join(',')]
-    .concat(rows.map((r) => headers.map((h) => csvCell(r[h])).join(',')))
+    .concat(rows.map((r) => headers.map((h) => {
+      if (['twitter', 'instagram', 'threads', 'tiktok'].includes(h)) {
+        return csvCell(r.social_handles?.[h] || '')
+      }
+      return csvCell(r[h])
+    }).join(',')))
     .join('\n')
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
@@ -378,9 +383,14 @@ const exportAllWeeksCsv = () => {
     }
   }
   if (!all.length) return
-  const headers = ['week_of', 'rank', 'name', 'email', 'account_number', 'phone_number', 'week_points', 'exact_scorelines', 'correct_predictions', 'matches_scored']
+  const headers = ['week_of', 'rank', 'username', 'name', 'email', 'account_number', 'phone_number', 'twitter', 'instagram', 'threads', 'tiktok', 'week_points', 'exact_scorelines', 'correct_predictions', 'matches_scored']
   const csv = [headers.join(',')]
-    .concat(all.map((r) => headers.map((h) => csvCell(r[h])).join(',')))
+    .concat(all.map((r) => headers.map((h) => {
+      if (['twitter', 'instagram', 'threads', 'tiktok'].includes(h)) {
+        return csvCell(r.social_handles?.[h] || '')
+      }
+      return csvCell(r[h])
+    }).join(',')))
     .join('\n')
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
@@ -541,7 +551,7 @@ const removeAdmin = async (targetEmail: string) => {
 // --- Reports ---
 const reportLoading = ref(false)
 const guestListLoading = ref(false)
-const guestList = ref<Array<{ email: string; created_at: string; prediction_count: number }>>([])
+const guestList = ref<Array<{ email: string; username: string; social_handles: any; created_at: string; prediction_count: number }>>([])
 const reportData = ref<{
   totalUsers: number
   sycamoreUsers: number
@@ -628,7 +638,7 @@ const loadGuestList = async () => {
   try {
     const { data: guests } = await supabase
       .from('synced_users')
-      .select('id, email, created_at')
+      .select('id, email, username, social_handles, created_at')
       .is('account_number', null)
       .order('created_at', { ascending: false })
       .limit(100)
@@ -649,6 +659,8 @@ const loadGuestList = async () => {
 
     guestList.value = (guests || []).map((g) => ({
       email: g.email,
+      username: g.username || '',
+      social_handles: g.social_handles || null,
       created_at: g.created_at,
       prediction_count: predCounts[g.id] || 0,
     }))
@@ -1046,8 +1058,9 @@ watch(activeTab, (tab) => {
                 <thead class="bg-ink-50 text-ink-500 text-xs uppercase">
                   <tr>
                     <th class="text-left px-3 py-2">#</th>
-                    <th class="text-left px-3 py-2">Name</th>
+                    <th class="text-left px-3 py-2">User</th>
                     <th class="text-left px-3 py-2">Account</th>
+                    <th class="text-left px-3 py-2">Socials</th>
                     <th class="text-right px-3 py-2">Pts</th>
                     <th class="text-right px-3 py-2">Exact</th>
                     <th class="text-right px-3 py-2">Correct</th>
@@ -1057,10 +1070,14 @@ watch(activeTab, (tab) => {
                   <tr v-for="w in payoutSingle.winners" :key="w.user_id">
                     <td class="px-3 py-2 font-bold">{{ w.rank }}</td>
                     <td class="px-3 py-2">
-                      <div class="font-semibold text-ink-900">{{ w.name }}</div>
+                      <div class="font-semibold text-ink-900">{{ w.username || w.name }}</div>
                       <div class="text-xs text-ink-400">{{ w.email }}</div>
                     </td>
-                    <td class="px-3 py-2 font-mono text-xs">{{ w.account_number }}</td>
+                    <td class="px-3 py-2 font-mono text-xs">{{ w.account_number || '-' }}</td>
+                    <td class="px-3 py-2 text-xs text-ink-500">
+                      <span v-if="w.social_handles?.twitter">X:@{{ w.social_handles.twitter }}</span>
+                      <span v-if="w.social_handles?.instagram" class="ml-1">IG:@{{ w.social_handles.instagram }}</span>
+                    </td>
                     <td class="px-3 py-2 text-right font-bold tabular-nums">{{ w.week_points }}</td>
                     <td class="px-3 py-2 text-right tabular-nums">{{ w.exact_scorelines }}</td>
                     <td class="px-3 py-2 text-right tabular-nums">{{ w.correct_predictions }}</td>
@@ -1292,6 +1309,7 @@ watch(activeTab, (tab) => {
                 <thead class="bg-ink-50 text-ink-500 text-xs uppercase sticky top-0">
                   <tr>
                     <th class="text-left px-3 py-2">Email</th>
+                    <th class="text-left px-3 py-2">Username</th>
                     <th class="text-left px-3 py-2">Joined</th>
                     <th class="text-right px-3 py-2">Predictions</th>
                   </tr>
@@ -1299,6 +1317,7 @@ watch(activeTab, (tab) => {
                 <tbody class="divide-y divide-ink-100">
                   <tr v-for="g in guestList" :key="g.email">
                     <td class="px-3 py-2 font-mono text-xs">{{ g.email }}</td>
+                    <td class="px-3 py-2 text-xs text-ink-700 font-semibold">{{ g.username || '-' }}</td>
                     <td class="px-3 py-2 text-xs text-ink-500">{{ g.created_at?.slice(0, 10) || '-' }}</td>
                     <td class="px-3 py-2 text-right font-bold tabular-nums">{{ g.prediction_count }}</td>
                   </tr>

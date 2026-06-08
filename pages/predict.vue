@@ -4,7 +4,6 @@ definePageMeta({ middleware: 'auth' })
 const supabase = useSupabase()
 const { user, isGuest, hasAccount, displayName } = useAuth()
 const { config: campaign, load: loadCampaign } = useCampaign()
-const showGuestModal = ref(false)
 const copiedAccount = ref(false)
 
 const matches = ref<any[]>([])
@@ -36,9 +35,6 @@ const loadData = async () => {
 
 onMounted(() => {
   loadData()
-  if (isGuest.value) {
-    showGuestModal.value = true
-  }
 })
 
 const weekRange = computed(() => {
@@ -204,7 +200,7 @@ const copyAccountNumber = async () => {
         <div class="flex-1">
           <p class="font-bold text-ink-900 text-sm">{{ isGuest ? "You're playing as a guest" : "You're not fully eligible yet" }}</p>
           <p class="text-xs text-ink-600 mt-0.5">
-            Your predictions are saved, but to appear on the leaderboard, pick a team, and win prizes, you need a Sycamore account with an account number.
+            Your predictions are saved, but to appear on the leaderboard, pick a team, and win prizes, you need a Sycamore account. Sign up with <span class="font-bold">{{ user?.email }}</span> so everything links up.
           </p>
         </div>
         <a
@@ -218,53 +214,5 @@ const copyAccountNumber = async () => {
       </div>
     </div>
 
-    <!-- Guest welcome modal -->
-    <Teleport to="body">
-      <div v-if="showGuestModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-        <div class="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 sm:p-8 space-y-5 text-center">
-          <div class="w-14 h-14 rounded-2xl bg-sky-100 mx-auto grid place-items-center">
-            <svg class="w-7 h-7 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-            </svg>
-          </div>
-          <h3 class="text-xl font-extrabold text-ink-900">Welcome!</h3>
-          <p class="text-sm text-ink-600 leading-relaxed">
-            You're signed in, but we don't have a Sycamore account linked to your email yet.
-          </p>
-          <div class="text-left rounded-xl bg-ink-50 p-4 space-y-2 text-xs text-ink-600">
-            <p class="font-semibold text-ink-900">As a guest you can:</p>
-            <ul class="list-disc pl-4 space-y-1">
-              <li>Make predictions on all matches</li>
-              <li>Track your picks</li>
-            </ul>
-            <p class="font-semibold text-ink-900 pt-2">To unlock everything:</p>
-            <ul class="list-disc pl-4 space-y-1">
-              <li>Appear on the leaderboard</li>
-              <li>Back a team and earn win bonuses</li>
-              <li>Win cash prizes</li>
-            </ul>
-          </div>
-          <p class="text-xs text-ink-500">
-            Download the Sycamore app and sign up. Once your account is verified, everything syncs automatically.
-          </p>
-          <div class="grid gap-2">
-            <a
-              href="https://appsflyer.sycamore.ng/Qthc/worldcup_website"
-              target="_blank"
-              rel="noreferrer"
-              class="btn-primary w-full text-sm py-3 text-center"
-            >
-              Get the Sycamore App
-            </a>
-            <button
-              @click="showGuestModal = false"
-              class="btn-secondary w-full text-sm py-3"
-            >
-              Continue as guest
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
   </div>
 </template>

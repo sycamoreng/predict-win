@@ -56,7 +56,7 @@ const getImgUrl = (filename: string) => `/${filename}`
         <!-- Description -->
         <p class="text-base sm:text-lg text-white/80 max-w-[480px] leading-relaxed">
           Predict every match, climb the live leaderboard, and win from a
-          <span class="text-[#5DC1E6] font-semibold">₦2,000,000 total prize pool</span>, paid straight to your Sycamore MFB account.
+          <span class="text-[#5DC1E6] font-semibold">₦2,000,000 total prize pool</span>, paid straight to your Sycamore account.
         </p>
 
         <!-- Buttons -->
