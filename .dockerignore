@@ -39,3 +39,4 @@ README.md
 *.md
 coverage
 .trivyignore
+service_account.json
