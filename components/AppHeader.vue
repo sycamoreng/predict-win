@@ -11,11 +11,11 @@ onMounted(() => {
 
 const navItems = computed(() => {
   const items = [
+    { to: '/team', label: 'My Team' },
     { to: '/predict', label: 'Predict' },
   ]
   if (!isGuest.value) {
     items.push({ to: '/leaderboard', label: 'Leaderboard' })
-    items.push({ to: '/team', label: 'My Team' })
   }
   return items
 })
@@ -114,7 +114,7 @@ const onLogout = async () => {
               <span class="ml-auto text-xs text-sky-600 font-bold">{{ backedTeamWins }} {{ backedTeamWins === 1 ? 'win' : 'wins' }}</span>
             </div>
             <NuxtLink v-if="!isGuest" to="/team" class="block px-3 py-2 text-sm rounded-lg hover:bg-ink-50 text-ink-700">My Team</NuxtLink>
-            <a v-if="isGuest" href="https://sycamore.ng" target="_blank" rel="noreferrer" class="block px-3 py-2 text-sm rounded-lg hover:bg-sky-50 text-sky-700">
+            <a v-if="isGuest" href="https://appsflyer.sycamore.ng/Qthc/worldcup_website" target="_blank" rel="noreferrer" class="block px-3 py-2 text-sm rounded-lg hover:bg-sky-50 text-sky-700">
               Get Sycamore App
             </a>
             <button @click="onLogout" class="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-coral-50 text-coral-700">

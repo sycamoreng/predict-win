@@ -208,7 +208,7 @@ const copyAccountNumber = async () => {
           </p>
         </div>
         <a
-          href="https://sycamore.ng"
+          href="https://appsflyer.sycamore.ng/Qthc/worldcup_website"
           target="_blank"
           rel="noreferrer"
           class="btn-primary text-sm px-5 py-2.5 shrink-0 text-center"
@@ -249,7 +249,7 @@ const copyAccountNumber = async () => {
           </p>
           <div class="grid gap-2">
             <a
-              href="https://sycamore.ng"
+              href="https://appsflyer.sycamore.ng/Qthc/worldcup_website"
               target="_blank"
               rel="noreferrer"
               class="btn-primary w-full text-sm py-3 text-center"

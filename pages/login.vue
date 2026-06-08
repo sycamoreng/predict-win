@@ -7,13 +7,14 @@ const error = ref('')
 const devCode = ref('')
 const agreedToTerms = ref(false)
 const showNewUserToast = ref(false)
+const showUsernamePrompt = ref(false)
 
 const { setSession, user } = useAuth()
 const { call } = useFunctions()
 const router = useRouter()
 
 onMounted(() => {
-  if (user.value) router.replace('/predict')
+  if (user.value) router.replace('/team')
 })
 
 const requestOtp = async () => {
@@ -52,12 +53,21 @@ const verifyOtp = async () => {
   try {
     const res = await call('auth-otp/verify', { email: email.value, code: code.value })
     setSession(res.user)
-    await router.replace('/predict')
+    if (!res.user.is_guest && !res.user.username) {
+      showUsernamePrompt.value = true
+    } else {
+      await router.replace('/team')
+    }
   } catch (e) {
     error.value = (e as Error).message
   } finally {
     loading.value = false
   }
+}
+
+const onUsernameDone = () => {
+  showUsernamePrompt.value = false
+  router.replace('/team')
 }
 </script>
 
@@ -112,7 +122,8 @@ const verifyOtp = async () => {
       <div class="w-full max-w-sm">
         <!-- Mobile logo -->
         <div class="md:hidden flex items-center gap-2 mb-6">
-          <img src="/logo.png" alt="Sycamore" class="h-7 w-auto" />
+          <img src="/Group.png" alt="Sycamore" class="h-7 w-7" />
+          <span class="text-sm font-extrabold text-ink-900">Predictor League</span>
         </div>
 
         <div class="animate-fade-up">
@@ -165,7 +176,7 @@ const verifyOtp = async () => {
                 Sign in with the email on your Sycamore account to unlock the leaderboard, team backing, and cash prizes. Don't have one yet?
               </p>
               <a
-                href="https://sycamore.ng"
+                href="https://appsflyer.sycamore.ng/Qthc/worldcup_website"
                 target="_blank"
                 rel="noreferrer"
                 class="text-xs font-semibold text-sky-600"
@@ -246,4 +257,6 @@ const verifyOtp = async () => {
       </div>
     </Transition>
   </Teleport>
+
+  <UsernamePrompt :show="showUsernamePrompt" @done="onUsernameDone" />
 </template>

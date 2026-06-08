@@ -225,6 +225,7 @@ Deno.serve(async (req: Request) => {
         id: `guest_${email}`,
         email,
         name: email.split("@")[0],
+        username: null,
         account_number: null,
         active_customer_flag: false,
         qualifying_transactions_count: 0,

@@ -2,6 +2,7 @@ interface SessionUser {
   id: string
   email: string
   name: string
+  username?: string | null
   account_number: string | null
   active_customer_flag: boolean
   qualifying_transactions_count: number
@@ -75,13 +76,14 @@ export const useAuth = () => {
   const isGuest = computed(() => !!user.value?.is_guest)
   const hasAccount = computed(() => !!user.value?.account_number)
   const isSycamoreUser = computed(() => !!user.value && !isGuest.value && hasAccount.value)
+  const needsUsername = computed(() => !!user.value && !user.value.is_guest && !user.value.username)
 
   const displayName = computed(() => {
     if (!user.value) return ''
     if (user.value.is_guest) {
       return user.value.email.split('@')[0]
     }
-    return user.value.name || user.value.email.split('@')[0]
+    return user.value.username || user.value.name || user.value.email.split('@')[0]
   })
 
   const refreshUser = async () => {
@@ -123,5 +125,5 @@ export const useAuth = () => {
     setAdminSession(null)
   }
 
-  return { user, admin, isGuest, hasAccount, isSycamoreUser, displayName, setSession, setAdminSession, loadFromStorage, refreshUser, logout, adminLogout, hasPermission }
+  return { user, admin, isGuest, hasAccount, isSycamoreUser, needsUsername, displayName, setSession, setAdminSession, loadFromStorage, refreshUser, logout, adminLogout, hasPermission }
 }

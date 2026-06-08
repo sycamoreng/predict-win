@@ -8,8 +8,8 @@ const { config: campaign, load: loadCampaign } = useCampaign()
 const players = ref<any[]>([])
 const loading = ref(true)
 
-const firstName = (name: string) => {
-  return (name || '').split(' ')[0] || 'Player'
+const displayUsername = (p: any) => {
+  return p.username || (p.name || '').split(' ')[0] || 'Player'
 }
 
 const load = async () => {
@@ -21,7 +21,7 @@ const load = async () => {
   loading.value = true
   const { data } = await supabase
     .from('synced_users')
-    .select('id, name, email, total_points, active_customer_flag, is_account_valid, exact_scorelines_count, correct_predictions_count, backed_team:teams!synced_users_backed_team_id_fkey(flag_emoji, code)')
+    .select('id, name, username, email, total_points, active_customer_flag, is_account_valid, exact_scorelines_count, correct_predictions_count, backed_team:teams!synced_users_backed_team_id_fkey(flag_emoji, code)')
     .eq('active_customer_flag', true)
     .eq('is_account_valid', true)
     .order('total_points', { ascending: false })
@@ -84,7 +84,7 @@ const rankShareText = computed(() => {
           The leaderboard is available to Sycamore customers with an account number. Sign up on the Sycamore app to see rankings and compete for prizes.
         </p>
         <a
-          href="https://sycamore.ng"
+          href="https://appsflyer.sycamore.ng/Qthc/worldcup_website"
           target="_blank"
           rel="noreferrer"
           class="btn-primary px-8 py-3 text-sm inline-block mt-6"
@@ -143,7 +143,7 @@ const rankShareText = computed(() => {
                 {{ ['&#129352;', '&#129351;', '&#129353;'][i] }}
               </div>
               <div class="text-3xl sm:text-4xl mb-1">{{ p.backed_team?.flag_emoji || '&#9917;' }}</div>
-              <div class="font-bold text-ink-900 truncate capitalize">{{ firstName(p.name) }}</div>
+              <div class="font-bold text-ink-900 truncate lowercase">{{ displayUsername(p) }}</div>
               <div class="text-xs text-ink-400 mb-3">#{{ [2, 1, 3][i] }}</div>
               <div class="inline-flex pill bg-sky-50 text-sky-700 text-base">{{ p.total_points }} pts</div>
             </div>
@@ -177,8 +177,8 @@ const rankShareText = computed(() => {
               </div>
               <div class="text-2xl">{{ p.backed_team?.flag_emoji || '&#9917;' }}</div>
               <div class="flex-1 min-w-0">
-                <div class="font-semibold text-ink-900 truncate capitalize">
-                  {{ firstName(p.name) }}
+                <div class="font-semibold text-ink-900 truncate lowercase">
+                  {{ displayUsername(p) }}
                   <span v-if="user && p.id === user.id" class="ml-2 pill bg-sky-100 text-sky-700 text-[10px]">You</span>
                 </div>
                 <div class="text-xs text-ink-500 truncate">

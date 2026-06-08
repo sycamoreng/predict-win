@@ -136,7 +136,7 @@ const backedTeamWins = computed(() => (user.value as any)?.backed_team_wins || 0
         To back a team and enable auto-savings, you need a Sycamore account with an account number. Your predictions are still safe -- once your account is set up, everything syncs automatically.
       </p>
       <a
-        href="https://sycamore.ng"
+        href="https://appsflyer.sycamore.ng/Qthc/worldcup_website"
         target="_blank"
         rel="noreferrer"
         class="btn-primary px-8 py-3 text-sm inline-block"

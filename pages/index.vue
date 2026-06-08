@@ -3,13 +3,13 @@ const { user } = useAuth()
 const router = useRouter()
 
 onMounted(() => {
-  if (user.value) router.replace('/predict')
+  if (user.value) router.replace('/team')
 })
 
 const steps = [
   { num: '01', title: 'Get App & Verify', desc: 'Sign up and complete your BVN verification.', bg: 'bg-[#e2f7ee]', img: 'Group.png' },
-  { num: '02', title: 'Transact', desc: 'Buy airtime, data, or fund your account', bg: 'bg-[#fef4dc]', img: 'Transfers-1.png' },
-  { num: '03', title: 'Make Predictions', desc: 'Make predictions to advance on the leaderboard.', bg: 'bg-[#ddf4fb]', img: 'Transfers.png' },
+  { num: '02', title: 'Transact', desc: 'Buy airtime, data, or fund your account', bg: 'bg-[#fef4dc]', img: 'Transfers.png' },
+  { num: '03', title: 'Make Predictions', desc: 'Make predictions to advance on the leaderboard.', bg: 'bg-[#ddf4fb]', img: 'Transfers-1.png' },
   { num: '04', title: 'Win Cash', desc: '₦500k Grand Prize & ₦100k Weekly Payouts up for grabs.', bg: 'bg-[#fce8e8]', img: 'Leaderboard_illustr_2.png' },
 ]
 
@@ -27,7 +27,7 @@ const getImgUrl = (filename: string) => `/${filename}`
       <!-- 3D Football player -->
       <div class="absolute top-0 right-0 w-[55%] h-full hidden md:block pointer-events-none">
         <img
-          :src="getImgUrl('Ultra-clean_3D_render_of_the_202606060307_1.png')"
+          :src="getImgUrl('baller.png')"
           alt=""
           class="absolute top-1/2 right-4 -translate-y-1/2 w-[90%] h-auto object-contain opacity-90 mix-blend-lighten"
         />
