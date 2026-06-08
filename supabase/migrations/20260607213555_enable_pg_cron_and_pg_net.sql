@@ -1,0 +1,5 @@
+-- Enable pg_cron for scheduled jobs
+CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;
+
+-- Enable pg_net for async HTTP calls from within Postgres
+CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
