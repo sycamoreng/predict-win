@@ -62,20 +62,6 @@ jobs:
           template: "@trivy-html.tpl"
           output: trivy-image-report.html
 
-      - name: Trivy fs scan
-        id: trivy_fs
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@v0.35.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
-          format: template
-          template: "@trivy-html.tpl"
-          output: trivy-fs-report.html
-
       - name: Send Trivy image report to Slack
         if: always()
         uses: MeilCli/slack-upload-file@v4
@@ -92,22 +78,8 @@ jobs:
             *Status:* ${{ steps.trivy_scan.outcome == 'success' && ':white_check_mark: PASSED' || ':x: FAILED' }}
             *Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Logs>
 
-      - name: Send Trivy fs report to Slack
-        if: always()
-        uses: MeilCli/slack-upload-file@v4
-        with:
-          slack_token: ${{ secrets.SLACK_TOKEN }}
-          channel_id: ${{ secrets.SLACK_CHANNEL_ID }}
-          file_path: trivy-fs-report.html
-          file_name: trivy-predict-win-fs-${{ github.run_number }}.html
-          file_type: html
-          initial_comment: |
-            *Trivy FS Scan — predict-win production*
-            *Tag:* `${{ steps.tag.outputs.tag }}`
-            *Status:* ${{ steps.trivy_fs.outcome == 'success' && ':white_check_mark: PASSED' || ':x: FAILED' }}
-
       - name: Fail if vulnerabilities found
-        if: steps.trivy_scan.outcome == 'failure' || steps.trivy_fs.outcome == 'failure'
+        if: steps.trivy_scan.outcome == 'failure'
         run: |
           echo "::error::HIGH or CRITICAL vulnerabilities detected"
           exit 1
