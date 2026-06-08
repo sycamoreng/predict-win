@@ -1,0 +1,156 @@
+name: GitOps - Main Deploy (predict-win)
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: gcr.io/single-planet-281907/sycamore-prod-predict-win
+  SERVICE_ACCOUNT: ${{ secrets.SERVICE_ACCOUNT }}
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      image_tag: ${{ steps.tag.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 20
+          lfs: true
+
+      - name: Set image tag
+        id: tag
+        run: echo "tag=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Login to GCR
+        run: |
+          echo $SERVICE_ACCOUNT | base64 -d > service_account.json
+          cat service_account.json | docker login -u _json_key --password-stdin https://gcr.io
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --build-arg VITE_SUPABASE_URL="${{ secrets.SUPABASE_URL }}" \
+            --build-arg VITE_SUPABASE_ANON_KEY="${{ secrets.SUPABASE_ANON_KEY }}" \
+            -t $IMAGE:${{ steps.tag.outputs.tag }} .
+
+      - name: Download Trivy HTML template
+        run: |
+          curl -sfL -o trivy-html.tpl \
+            https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl
+
+      - name: Trivy image scan
+        id: trivy_scan
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: ${{ env.IMAGE }}:${{ steps.tag.outputs.tag }}
+          severity: HIGH,CRITICAL
+          vuln-type: os,library
+          ignore-unfixed: true
+          exit-code: 1
+          format: template
+          template: "@trivy-html.tpl"
+          output: trivy-image-report.html
+
+      - name: Trivy fs scan
+        id: trivy_fs
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: template
+          template: "@trivy-html.tpl"
+          output: trivy-fs-report.html
+
+      - name: Send Trivy image report to Slack
+        if: always()
+        uses: MeilCli/slack-upload-file@v4
+        with:
+          slack_token: ${{ secrets.SLACK_TOKEN }}
+          channel_id: ${{ secrets.SLACK_CHANNEL_ID }}
+          file_path: trivy-image-report.html
+          file_name: trivy-predict-win-image-${{ github.run_number }}.html
+          file_type: html
+          initial_comment: |
+            *Trivy Image Scan — predict-win production*
+            *Branch:* `${{ github.ref_name }}`
+            *Tag:* `${{ steps.tag.outputs.tag }}`
+            *Status:* ${{ steps.trivy_scan.outcome == 'success' && ':white_check_mark: PASSED' || ':x: FAILED' }}
+            *Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Logs>
+
+      - name: Send Trivy fs report to Slack
+        if: always()
+        uses: MeilCli/slack-upload-file@v4
+        with:
+          slack_token: ${{ secrets.SLACK_TOKEN }}
+          channel_id: ${{ secrets.SLACK_CHANNEL_ID }}
+          file_path: trivy-fs-report.html
+          file_name: trivy-predict-win-fs-${{ github.run_number }}.html
+          file_type: html
+          initial_comment: |
+            *Trivy FS Scan — predict-win production*
+            *Tag:* `${{ steps.tag.outputs.tag }}`
+            *Status:* ${{ steps.trivy_fs.outcome == 'success' && ':white_check_mark: PASSED' || ':x: FAILED' }}
+
+      - name: Fail if vulnerabilities found
+        if: steps.trivy_scan.outcome == 'failure' || steps.trivy_fs.outcome == 'failure'
+        run: |
+          echo "::error::HIGH or CRITICAL vulnerabilities detected"
+          exit 1
+
+      - name: Push image to GCR
+        run: |
+          docker push $IMAGE:${{ steps.tag.outputs.tag }}
+
+  update-infra-repo:
+    needs: docker-build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout infrastructure repo
+        uses: actions/checkout@v4
+        with:
+          repository: sycamoreng/Infrastructure
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
+          ref: main
+          path: infrastructure
+
+      - name: Install Kustomize
+        run: |
+          curl -sLo kustomize.tar.gz \
+            https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.3.0/kustomize_v5.3.0_linux_amd64.tar.gz
+          tar -xzf kustomize.tar.gz
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Update image tag in infra repo
+        env:
+          IMAGE: gcr.io/single-planet-281907/sycamore-prod-predict-win
+        run: |
+          cd infrastructure/apps/predict-win/overlays/production
+          kustomize edit set image \
+            $IMAGE=${IMAGE}:${{ needs.docker-build.outputs.image_tag }}
+
+      - name: Commit and push
+        run: |
+          cd infrastructure
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "deploy(production): predict-win → ${{ needs.docker-build.outputs.image_tag }}"
+          git pull --rebase origin main
+          git push origin main
