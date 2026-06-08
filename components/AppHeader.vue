@@ -53,6 +53,7 @@ const onLogout = async () => {
         <img src="/logo.png" alt="Sycamore" class="h-8 w-auto" />
       </NuxtLink>
 
+      <ClientOnly>
       <nav v-if="user" class="hidden md:flex items-center gap-1">
         <NuxtLink
           v-for="item in navItems"
@@ -114,6 +115,7 @@ const onLogout = async () => {
               <span class="ml-auto text-xs text-sky-600 font-bold">{{ backedTeamWins }} {{ backedTeamWins === 1 ? 'win' : 'wins' }}</span>
             </div>
             <NuxtLink v-if="!isGuest" to="/team" class="block px-3 py-2 text-sm rounded-lg hover:bg-ink-50 text-ink-700">My Team</NuxtLink>
+            <NuxtLink v-if="!isGuest" to="/settings" class="block px-3 py-2 text-sm rounded-lg hover:bg-ink-50 text-ink-700">Settings</NuxtLink>
             <a v-if="isGuest" href="https://appsflyer.sycamore.ng/Qthc/worldcup_website" target="_blank" rel="noreferrer" class="block px-3 py-2 text-sm rounded-lg hover:bg-sky-50 text-sky-700">
               Get Sycamore App
             </a>
@@ -127,8 +129,10 @@ const onLogout = async () => {
       <div v-else>
         <NuxtLink to="/login" class="inline-flex items-center justify-center rounded-full bg-ink-900 text-white font-bold text-sm px-5 py-2.5 hover:bg-ink-800 transition">Sign in</NuxtLink>
       </div>
+      </ClientOnly>
     </div>
 
+    <ClientOnly>
     <nav v-if="user" class="md:hidden border-t border-ink-100">
       <div class="max-w-6xl mx-auto px-2 flex">
         <NuxtLink
@@ -142,5 +146,6 @@ const onLogout = async () => {
         </NuxtLink>
       </div>
     </nav>
+    </ClientOnly>
   </header>
 </template>

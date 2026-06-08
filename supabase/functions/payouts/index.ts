@@ -42,10 +42,12 @@ function weekBounds(refIso?: string): { start: string; end: string } {
 
 interface Aggregate {
   user_id: string;
+  username: string;
   name: string;
   email: string;
   account_number: string;
   phone_number: string;
+  social_handles: Record<string, string> | null;
   week_points: number;
   exact_scorelines: number;
   correct_predictions: number;
@@ -71,7 +73,7 @@ async function buildWeeklyWinners(weekStart: string, weekEnd: string, topN: numb
   const matchIds = matches.map((m) => m.id);
   const { data: preds } = await supabase
     .from("predictions")
-    .select("user_id, match_id, points_awarded, predicted_home_score, predicted_away_score, user:synced_users!predictions_user_id_fkey(id, name, email, account_number, phone_number, active_customer_flag, is_account_valid)")
+    .select("user_id, match_id, points_awarded, predicted_home_score, predicted_away_score, user:synced_users!predictions_user_id_fkey(id, name, username, email, account_number, phone_number, social_handles, active_customer_flag, is_account_valid)")
     .in("match_id", matchIds);
 
   const agg = new Map<string, Aggregate>();
@@ -84,10 +86,12 @@ async function buildWeeklyWinners(weekStart: string, weekEnd: string, topN: numb
     if (!row) {
       row = {
         user_id: u.id,
+        username: u.username || '',
         name: u.name,
         email: u.email,
         account_number: u.account_number,
         phone_number: u.phone_number,
+        social_handles: u.social_handles || null,
         week_points: 0,
         exact_scorelines: 0,
         correct_predictions: 0,

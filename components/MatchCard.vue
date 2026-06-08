@@ -51,9 +51,13 @@ const firstToScore = ref<string | null>(props.prediction?.predicted_first_to_sco
 const homeScore = ref<number>(props.prediction?.predicted_home_score ?? 0)
 const awayScore = ref<number>(props.prediction?.predicted_away_score ?? 0)
 
-const wantsWinner = ref<boolean>(props.prediction?.wants_winner_pick ?? true)
-const wantsFirstToScore = ref<boolean>(props.prediction?.wants_first_to_score_pick ?? true)
-const wantsExactScore = ref<boolean>(props.prediction?.wants_exact_score_pick ?? true)
+const wantsWinner = ref<boolean>(props.prediction?.wants_winner_pick ?? false)
+const wantsFirstToScore = ref<boolean>(props.prediction?.wants_first_to_score_pick ?? false)
+const wantsExactScore = ref<boolean>(props.prediction?.wants_exact_score_pick ?? false)
+
+const hasTouchedWinner = ref(!!props.prediction?.wants_winner_pick)
+const hasTouchedFirstScorer = ref(!!props.prediction?.wants_first_to_score_pick)
+const hasTouchedScore = ref(!!props.prediction?.wants_exact_score_pick)
 
 const saving = ref(false)
 const error = ref('')
@@ -149,6 +153,7 @@ const scoreDisabled = computed(() => isLocked.value || !wantsExactScore.value)
 
 const pickFirstScorer = (teamId: string) => {
   if (firstScorerDisabled.value) return
+  hasTouchedFirstScorer.value = true
   firstToScore.value = teamId
   if (wantsExactScore.value) {
     if (teamId === props.match.home_team_id && homeScore.value === 0) {
@@ -163,6 +168,7 @@ const pickFirstScorer = (teamId: string) => {
 
 const pickWinner = (which: 'home' | 'draw' | 'away') => {
   if (winnerDisabled.value) return
+  hasTouchedWinner.value = true
   if (which === 'home') {
     winner.value = props.match.home_team_id
     if (wantsExactScore.value && homeScore.value <= awayScore.value) {
@@ -182,6 +188,7 @@ const pickWinner = (which: 'home' | 'draw' | 'away') => {
 
 const adjScore = (side: 'home' | 'away', delta: number) => {
   if (scoreDisabled.value) return
+  hasTouchedScore.value = true
   if (side === 'home') homeScore.value = Math.max(0, Math.min(15, homeScore.value + delta))
   else awayScore.value = Math.max(0, Math.min(15, awayScore.value + delta))
   if (wantsWinner.value) deriveWinnerFromScore()
@@ -190,10 +197,22 @@ const adjScore = (side: 'home' | 'away', delta: number) => {
 
 const anyEnabled = computed(() => wantsWinner.value || wantsFirstToScore.value || wantsExactScore.value)
 
+const canSubmit = computed(() => {
+  if (!anyEnabled.value) return false
+  if (wantsWinner.value && !hasTouchedWinner.value) return false
+  if (wantsFirstToScore.value && !hasTouchedFirstScorer.value) return false
+  if (wantsExactScore.value && !hasTouchedScore.value) return false
+  return true
+})
+
 const save = async () => {
   if (!user.value || isLocked.value) return
   if (!anyEnabled.value) {
     error.value = 'Pick at least one prediction type to enter.'
+    return
+  }
+  if (!canSubmit.value) {
+    error.value = 'Make a selection in each category you opted into.'
     return
   }
   saving.value = true
@@ -361,8 +380,11 @@ const save = async () => {
             {{ match.away_team.flag_emoji }} {{ match.away_team.code }}
           </button>
         </div>
-        <p v-if="wantsFirstToScore && wantsExactScore && homeScore === 0 && awayScore === 0" class="mt-2 text-xs text-ink-500">
+        <p v-if="wantsFirstToScore && wantsExactScore && homeScore === 0 && awayScore === 0 && hasTouchedScore" class="mt-2 text-xs text-ink-500">
           Goalless draw predicted &mdash; picking a first scorer will set their score to 1.
+        </p>
+        <p v-if="wantsFirstToScore && !hasTouchedFirstScorer" class="mt-2 text-xs text-ink-400">
+          Tap a team to pick who scores first.
         </p>
       </div>
 
@@ -389,7 +411,7 @@ const save = async () => {
             >−</button>
             <div class="flex-1 text-center">
               <div class="text-xs text-ink-500 font-semibold">{{ match.home_team.code }}</div>
-              <div class="text-2xl font-extrabold text-ink-900">{{ homeScore }}</div>
+              <div class="text-2xl font-extrabold text-ink-900">{{ hasTouchedScore ? homeScore : '–' }}</div>
             </div>
             <button
               type="button"
@@ -407,7 +429,7 @@ const save = async () => {
             >−</button>
             <div class="flex-1 text-center">
               <div class="text-xs text-ink-500 font-semibold">{{ match.away_team.code }}</div>
-              <div class="text-2xl font-extrabold text-ink-900">{{ awayScore }}</div>
+              <div class="text-2xl font-extrabold text-ink-900">{{ hasTouchedScore ? awayScore : '–' }}</div>
             </div>
             <button
               type="button"
@@ -417,14 +439,20 @@ const save = async () => {
             >+</button>
           </div>
         </div>
+        <p v-if="wantsExactScore && !hasTouchedScore" class="mt-2 text-xs text-ink-400">
+          Tap +/&minus; to set your predicted score.
+        </p>
       </div>
 
       <p v-if="error" class="text-sm text-coral-600">{{ error }}</p>
+      <p v-if="!anyEnabled && !isLocked && !prediction" class="text-center text-xs text-ink-400">
+        Tick the categories you want to predict, then make your picks.
+      </p>
 
       <button
         v-if="!isLocked"
         @click="save"
-        :disabled="saving || !anyEnabled"
+        :disabled="saving || !canSubmit"
         class="btn-primary w-full disabled:opacity-50"
       >
         <span v-if="justSaved" class="animate-pop-in">Saved</span>

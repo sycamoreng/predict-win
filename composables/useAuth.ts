@@ -1,8 +1,16 @@
+interface SocialHandles {
+  twitter?: string
+  instagram?: string
+  threads?: string
+  tiktok?: string
+}
+
 interface SessionUser {
   id: string
   email: string
   name: string
   username?: string | null
+  social_handles?: SocialHandles | null
   account_number: string | null
   active_customer_flag: boolean
   qualifying_transactions_count: number
@@ -78,12 +86,20 @@ export const useAuth = () => {
   const isSycamoreUser = computed(() => !!user.value && !isGuest.value && hasAccount.value)
   const needsUsername = computed(() => !!user.value && !user.value.is_guest && !user.value.username)
 
+  const isAutoUsername = (u: string | null | undefined) => {
+    if (!u) return true
+    return /^[a-z]+-[a-z]+-\d+$/.test(u)
+  }
+
   const displayName = computed(() => {
     if (!user.value) return ''
     if (user.value.is_guest) {
       return user.value.email.split('@')[0]
     }
-    return user.value.username || user.value.name || user.value.email.split('@')[0]
+    if (user.value.username && !isAutoUsername(user.value.username)) {
+      return user.value.username
+    }
+    return user.value.name?.split(' ')[0] || user.value.email.split('@')[0]
   })
 
   const refreshUser = async () => {
