@@ -1,0 +1,1 @@
+ALTER TABLE synced_users ALTER COLUMN account_number DROP NOT NULL;

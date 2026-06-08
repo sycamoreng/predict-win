@@ -2,7 +2,7 @@
 definePageMeta({ middleware: 'auth' })
 
 const supabase = useSupabase()
-const { user, isGuest, refreshUser } = useAuth()
+const { user, isGuest, hasAccount, refreshUser } = useAuth()
 const { config: campaign, load: loadCampaign } = useCampaign()
 const { call } = useFunctions()
 
@@ -125,7 +125,7 @@ const backedTeamWins = computed(() => (user.value as any)?.backed_team_wins || 0
 <template>
   <div class="space-y-8">
     <!-- Guest block -->
-    <div v-if="isGuest" class="card p-8 sm:p-12 text-center max-w-lg mx-auto">
+    <div v-if="isGuest || !hasAccount" class="card p-8 sm:p-12 text-center max-w-lg mx-auto">
       <div class="w-16 h-16 rounded-2xl bg-sun-100 mx-auto grid place-items-center mb-5">
         <svg class="w-8 h-8 text-sun-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
@@ -133,7 +133,7 @@ const backedTeamWins = computed(() => (user.value as any)?.backed_team_wins || 0
       </div>
       <h1 class="text-2xl font-extrabold text-ink-900 mb-2">Sycamore account required</h1>
       <p class="text-sm text-ink-600 mb-6 max-w-sm mx-auto leading-relaxed">
-        To back a team and enable auto-savings, you need a verified Sycamore account. Your predictions are still safe -- once you sign up, everything syncs automatically.
+        To back a team and enable auto-savings, you need a Sycamore account with an account number. Your predictions are still safe -- once your account is set up, everything syncs automatically.
       </p>
       <a
         href="https://sycamore.ng"

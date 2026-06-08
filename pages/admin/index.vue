@@ -563,12 +563,12 @@ const loadReports = async () => {
     const { count: sycamoreUsers } = await supabase
       .from('synced_users')
       .select('*', { count: 'exact', head: true })
-      .neq('account_number', '')
+      .not('account_number', 'is', null)
 
     const { count: guestUsers } = await supabase
       .from('synced_users')
       .select('*', { count: 'exact', head: true })
-      .eq('account_number', '')
+      .is('account_number', null)
 
     const { count: activeCustomers } = await supabase
       .from('synced_users')
@@ -629,7 +629,7 @@ const loadGuestList = async () => {
     const { data: guests } = await supabase
       .from('synced_users')
       .select('id, email, created_at')
-      .eq('account_number', '')
+      .is('account_number', null)
       .order('created_at', { ascending: false })
       .limit(100)
 
@@ -1165,11 +1165,11 @@ watch(activeTab, (tab) => {
             </div>
             <div class="card p-4 text-center">
               <div class="text-2xl font-extrabold text-sky-600">{{ reportData.sycamoreUsers }}</div>
-              <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Sycamore users</div>
+              <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">With account no.</div>
             </div>
             <div class="card p-4 text-center">
               <div class="text-2xl font-extrabold text-sun-600">{{ reportData.guestUsers }}</div>
-              <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Guest only</div>
+              <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">No account no.</div>
             </div>
             <div class="card p-4 text-center">
               <div class="text-2xl font-extrabold text-mint-600">{{ reportData.activeCustomers }}</div>
@@ -1197,7 +1197,7 @@ watch(activeTab, (tab) => {
                 </div>
               </div>
               <div class="flex items-center gap-3">
-                <div class="w-32 text-sm text-ink-600">Sycamore users</div>
+                <div class="w-32 text-sm text-ink-600">With account no.</div>
                 <div class="flex-1 h-7 bg-ink-100 rounded-lg overflow-hidden relative">
                   <div class="h-full bg-sky-500 rounded-lg" :style="{ width: reportData.totalUsers ? (reportData.sycamoreUsers / reportData.totalUsers * 100) + '%' : '0%' }"></div>
                   <span class="absolute inset-0 flex items-center justify-center text-xs font-bold" :class="reportData.sycamoreUsers > reportData.totalUsers * 0.5 ? 'text-white' : 'text-ink-700'">{{ reportData.sycamoreUsers }} ({{ reportData.totalUsers ? Math.round(reportData.sycamoreUsers / reportData.totalUsers * 100) : 0 }}%)</span>
@@ -1278,11 +1278,11 @@ watch(activeTab, (tab) => {
 
           <!-- Guest users list -->
           <div class="card p-5 space-y-3">
-            <h3 class="font-bold text-ink-900">Guest-only users (not on Sycamore)</h3>
-            <p class="text-sm text-ink-500">Users who signed in but haven't created a Sycamore account yet.</p>
-            <div v-if="reportData.guestUsers === 0" class="text-sm text-ink-400">No guest users yet.</div>
+            <h3 class="font-bold text-ink-900">Users without account numbers</h3>
+            <p class="text-sm text-ink-500">These users have signed in but don't have a Sycamore account number yet. They can predict but can't access the leaderboard, team backing, or auto-savings.</p>
+            <div v-if="reportData.guestUsers === 0" class="text-sm text-ink-400">All users have account numbers.</div>
             <div v-else class="text-sm text-ink-600">
-              {{ reportData.guestUsers }} users on the prediction app without a Sycamore account.
+              {{ reportData.guestUsers }} users without an account number.
               <button @click="loadGuestList" :disabled="guestListLoading" class="ml-2 pill bg-ink-100 text-ink-700 hover:bg-ink-200 text-xs">
                 {{ guestListLoading ? 'Loading...' : 'View list' }}
               </button>

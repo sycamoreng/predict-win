@@ -6,6 +6,7 @@ const loading = ref(false)
 const error = ref('')
 const devCode = ref('')
 const agreedToTerms = ref(false)
+const showNewUserToast = ref(false)
 
 const { setSession, user } = useAuth()
 const { call } = useFunctions()
@@ -29,6 +30,10 @@ const requestOtp = async () => {
   try {
     const res = await call('auth-otp/request', { email: email.value })
     devCode.value = res.devCode || ''
+    if (res.isNewUser) {
+      showNewUserToast.value = true
+      setTimeout(() => { showNewUserToast.value = false }, 6000)
+    }
     step.value = 'otp'
   } catch (e) {
     error.value = (e as Error).message
@@ -64,11 +69,7 @@ const verifyOtp = async () => {
 
       <div class="relative z-10">
         <div class="flex items-center gap-2.5">
-          <img src="/Group.png" alt="Sycamore" class="h-9 w-9" />
-          <div class="leading-tight">
-            <div class="font-extrabold text-white tracking-tight">Predictor League</div>
-            <div class="text-[10px] uppercase tracking-widest text-sky-400 font-semibold">Sycamore</div>
-          </div>
+          <img src="/logo-white.png" alt="Sycamore" class="h-9 w-auto" />
         </div>
       </div>
 
@@ -83,7 +84,7 @@ const verifyOtp = async () => {
             <span class="flex-shrink-0 w-6 h-6 rounded-full bg-sky-500/20 border border-sky-400/30 flex items-center justify-center text-[10px] font-bold text-sky-300">1</span>
             <div>
               <p class="text-white text-sm font-medium">Sign in with your email</p>
-              <p class="text-ink-400 text-xs">Anyone can sign in and start predicting.</p>
+              <p class="text-ink-400 text-xs">Use your Sycamore email for full access, or any email to start predicting.</p>
             </div>
           </div>
           <div class="flex items-start gap-2.5">
@@ -111,8 +112,7 @@ const verifyOtp = async () => {
       <div class="w-full max-w-sm">
         <!-- Mobile logo -->
         <div class="md:hidden flex items-center gap-2 mb-6">
-          <img src="/Group.png" alt="Sycamore" class="h-7 w-7" />
-          <span class="text-sm font-extrabold text-ink-900">Predictor League</span>
+          <img src="/logo.png" alt="Sycamore" class="h-7 w-auto" />
         </div>
 
         <div class="animate-fade-up">
@@ -120,7 +120,7 @@ const verifyOtp = async () => {
           <template v-if="step === 'email'">
             <h1 class="text-xl font-extrabold text-ink-900">Sign in to play</h1>
             <p class="mt-1 text-sm text-ink-500 mb-6">
-              Enter your email to get started. Everyone can play!
+              Use the email linked to your Sycamore account for full access. No account yet? Enter any email to start predicting.
             </p>
 
             <form @submit.prevent="requestOtp" class="space-y-4">
@@ -134,6 +134,7 @@ const verifyOtp = async () => {
                   :disabled="loading"
                   autofocus
                 />
+                <p class="mt-1.5 text-[11px] text-ink-400">Tip: Use your Sycamore email to unlock leaderboard, team backing, and prizes.</p>
               </div>
 
               <label class="flex items-start gap-2.5 cursor-pointer group">
@@ -159,16 +160,16 @@ const verifyOtp = async () => {
 
             <!-- Mobile note -->
             <div class="md:hidden mt-6 rounded-lg bg-ink-50 p-3.5">
-              <p class="text-xs font-semibold text-ink-700 mb-1">Want the full experience?</p>
+              <p class="text-xs font-semibold text-ink-700 mb-1">Already a Sycamore customer?</p>
               <p class="text-[11px] text-ink-500 leading-relaxed mb-2">
-                Sycamore customers unlock the leaderboard, team backing, and cash prizes.
+                Sign in with the email on your Sycamore account to unlock the leaderboard, team backing, and cash prizes. Don't have one yet?
               </p>
               <a
                 href="https://sycamore.ng"
                 target="_blank"
                 rel="noreferrer"
                 class="text-xs font-semibold text-sky-600"
-              >Get the Sycamore App &rarr;</a>
+              >Sign up on Sycamore &rarr;</a>
             </div>
           </template>
 
@@ -218,4 +219,31 @@ const verifyOtp = async () => {
       </div>
     </div>
   </div>
+
+  <!-- Non-blocking toast for new users -->
+  <Teleport to="body">
+    <Transition
+      enter-active-class="transition duration-300 ease-out"
+      enter-from-class="translate-y-4 opacity-0"
+      enter-to-class="translate-y-0 opacity-100"
+      leave-active-class="transition duration-200 ease-in"
+      leave-from-class="translate-y-0 opacity-100"
+      leave-to-class="translate-y-4 opacity-0"
+    >
+      <div v-if="showNewUserToast" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-[90%] max-w-sm">
+        <div class="bg-ink-900 text-white rounded-xl px-4 py-3.5 shadow-xl flex items-start gap-3">
+          <div class="w-8 h-8 rounded-lg bg-sun-500/20 grid place-items-center shrink-0 mt-0.5">
+            <svg class="w-4 h-4 text-sun-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          </div>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-semibold">This email isn't on Sycamore yet</p>
+            <p class="text-xs text-ink-300 mt-0.5 leading-relaxed">You can still predict, but sign up on Sycamore to unlock full eligibility and prizes.</p>
+          </div>
+          <button @click="showNewUserToast = false" class="text-ink-400 hover:text-white shrink-0 mt-0.5">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
 </template>

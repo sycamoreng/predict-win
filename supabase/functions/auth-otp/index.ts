@@ -175,6 +175,7 @@ Deno.serve(async (req: Request) => {
           ? "OTP sent. Check your email."
           : "OTP generated.",
         delivered: sendResult.delivered,
+        isNewUser: !user,
       };
 
       if (!sendResult.delivered && !SENDGRID_API_KEY) {

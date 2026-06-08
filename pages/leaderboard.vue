@@ -2,7 +2,7 @@
 definePageMeta({ middleware: 'auth' })
 
 const supabase = useSupabase()
-const { user, isGuest } = useAuth()
+const { user, isGuest, hasAccount } = useAuth()
 const { config: campaign, load: loadCampaign } = useCampaign()
 
 const players = ref<any[]>([])
@@ -14,7 +14,7 @@ const firstName = (name: string) => {
 
 const load = async () => {
   await loadCampaign()
-  if (isGuest.value || !campaign.value.leaderboard_enabled) {
+  if (isGuest.value || !hasAccount.value || !campaign.value.leaderboard_enabled) {
     loading.value = false
     return
   }
@@ -71,8 +71,8 @@ const rankShareText = computed(() => {
       </div>
     </template>
 
-    <!-- Guest users -->
-    <template v-else-if="isGuest">
+    <!-- Guest users or users without account numbers -->
+    <template v-else-if="isGuest || !hasAccount">
       <div class="card p-12 sm:p-16 text-center max-w-lg mx-auto">
         <div class="w-16 h-16 rounded-2xl bg-sun-100 mx-auto grid place-items-center mb-5">
           <svg class="w-8 h-8 text-sun-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -81,7 +81,7 @@ const rankShareText = computed(() => {
         </div>
         <h1 class="text-2xl font-extrabold text-ink-900 mb-2">Sycamore account required</h1>
         <p class="text-sm text-ink-600 leading-relaxed max-w-sm mx-auto">
-          The leaderboard is available to Sycamore customers. Sign up on the Sycamore app to see rankings and compete for prizes.
+          The leaderboard is available to Sycamore customers with an account number. Sign up on the Sycamore app to see rankings and compete for prizes.
         </p>
         <a
           href="https://sycamore.ng"

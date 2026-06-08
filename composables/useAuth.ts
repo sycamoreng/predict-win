@@ -72,15 +72,16 @@ export const useAuth = () => {
     }
   }
 
-  const isGuest = computed(() => !!user.value?.is_guest || !user.value?.account_number)
-  const isSycamoreUser = computed(() => !!user.value && !isGuest.value)
+  const isGuest = computed(() => !!user.value?.is_guest)
+  const hasAccount = computed(() => !!user.value?.account_number)
+  const isSycamoreUser = computed(() => !!user.value && !isGuest.value && hasAccount.value)
 
   const displayName = computed(() => {
     if (!user.value) return ''
-    if (user.value.is_guest || !user.value.account_number) {
+    if (user.value.is_guest) {
       return user.value.email.split('@')[0]
     }
-    return user.value.name
+    return user.value.name || user.value.email.split('@')[0]
   })
 
   const refreshUser = async () => {
@@ -93,7 +94,7 @@ export const useAuth = () => {
         .select('*, backed_team:teams!synced_users_backed_team_id_fkey(*)')
         .eq('email', user.value.email)
         .maybeSingle()
-      if (data && data.account_number) {
+      if (data) {
         user.value = data as SessionUser
         if (import.meta.client) localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
       }
@@ -122,5 +123,5 @@ export const useAuth = () => {
     setAdminSession(null)
   }
 
-  return { user, admin, isGuest, isSycamoreUser, displayName, setSession, setAdminSession, loadFromStorage, refreshUser, logout, adminLogout, hasPermission }
+  return { user, admin, isGuest, hasAccount, isSycamoreUser, displayName, setSession, setAdminSession, loadFromStorage, refreshUser, logout, adminLogout, hasPermission }
 }

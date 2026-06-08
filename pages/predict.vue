@@ -2,7 +2,7 @@
 definePageMeta({ middleware: 'auth' })
 
 const supabase = useSupabase()
-const { user, isGuest, displayName } = useAuth()
+const { user, isGuest, hasAccount, displayName } = useAuth()
 const { config: campaign, load: loadCampaign } = useCampaign()
 const showGuestModal = ref(false)
 const copiedAccount = ref(false)
@@ -198,13 +198,13 @@ const copyAccountNumber = async () => {
     </div>
     </template>
 
-    <!-- Guest upgrade banner -->
-    <div v-if="isGuest" class="card p-4 sm:p-5 bg-gradient-to-r from-sun-50 to-sky-50 border-sun-200">
+    <!-- Upgrade banner for users without account numbers -->
+    <div v-if="isGuest || !hasAccount" class="card p-4 sm:p-5 bg-gradient-to-r from-sun-50 to-sky-50 border-sun-200">
       <div class="flex flex-col sm:flex-row sm:items-center gap-3">
         <div class="flex-1">
-          <p class="font-bold text-ink-900 text-sm">You're playing as a guest</p>
+          <p class="font-bold text-ink-900 text-sm">{{ isGuest ? "You're playing as a guest" : "You're not fully eligible yet" }}</p>
           <p class="text-xs text-ink-600 mt-0.5">
-            Your predictions are saved, but to appear on the leaderboard, pick a team, and win prizes, you need a Sycamore account.
+            Your predictions are saved, but to appear on the leaderboard, pick a team, and win prizes, you need a Sycamore account with an account number.
           </p>
         </div>
         <a

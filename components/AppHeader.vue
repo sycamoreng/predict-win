@@ -50,11 +50,7 @@ const onLogout = async () => {
   <header class="sticky top-0 z-30 bg-white/85 backdrop-blur border-b border-ink-100">
     <div class="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
       <NuxtLink to="/" class="flex items-center gap-2.5 group">
-        <img src="/Group.png" alt="Sycamore" class="h-8 w-8" />
-        <div class="leading-tight">
-          <div class="font-extrabold text-ink-900 tracking-tight text-sm">Predictor League</div>
-          <div class="text-[10px] uppercase tracking-widest text-ink-400 font-semibold">Sycamore</div>
-        </div>
+        <img src="/logo.png" alt="Sycamore" class="h-8 w-auto" />
       </NuxtLink>
 
       <nav v-if="user" class="hidden md:flex items-center gap-1">

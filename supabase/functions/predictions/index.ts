@@ -300,7 +300,7 @@ Deno.serve(async (req: Request) => {
             email,
             name: guestName,
             phone_number: "",
-            account_number: "",
+            account_number: null,
             active_customer_flag: false,
             is_account_valid: false,
             qualifying_transactions_count: 0,
