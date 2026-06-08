@@ -39,8 +39,8 @@ jobs:
       - name: Build Docker image
         run: |
           docker build \
-            --build-arg VITE_SUPABASE_URL=${{ secrets.SUPABASE_URL }} \
-            --build-arg VITE_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }} \
+            --build-arg VITE_SUPABASE_URL="${{ secrets.SUPABASE_URL }}" \
+            --build-arg VITE_SUPABASE_ANON_KEY="${{ secrets.SUPABASE_ANON_KEY }}" \
             -t $IMAGE:${{ steps.tag.outputs.tag }} .
 
       - name: Download Trivy HTML template
