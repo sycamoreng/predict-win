@@ -12,12 +12,13 @@ ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
 
 COPY package*.json ./
 
-# Mount GH Packages token as a build-time secret. Token is only
-# available during this RUN and is NOT persisted in any image layer.
+# TEMPORARY: using `npm install` instead of `npm ci` because the committed
+# package-lock.json is out of sync with package.json. Revert to `npm ci`
+# once the dev regenerates and commits a clean lockfile. Tracked as tech debt.
 RUN --mount=type=secret,id=gh_token,required=true \
     printf "@sycamoreng:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n" \
       "$(cat /run/secrets/gh_token)" > .npmrc && \
-    npm ci && \
+    npm install --no-audit --no-fund && \
     rm -f .npmrc
 
 COPY . .
