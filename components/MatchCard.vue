@@ -40,7 +40,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ saved: [Prediction] }>()
 
-const { user } = useAuth()
+const { user, trackPulseEvent } = useAuth()
 const { call } = useFunctions()
 
 const initialWinner = props.prediction
@@ -233,6 +233,14 @@ const save = async () => {
       wants_exact_score_pick: wantsExactScore.value,
     })
     justSaved.value = true
+    trackPulseEvent('prediction_saved', {
+      match_id: props.match.id,
+      home_team: props.match.home_team.name,
+      away_team: props.match.away_team.name,
+      wants_winner: wantsWinner.value,
+      wants_first_to_score: wantsFirstToScore.value,
+      wants_exact_score: wantsExactScore.value,
+    })
     setTimeout(() => (justSaved.value = false), 1800)
     emit('saved', {
       match_id: props.match.id,

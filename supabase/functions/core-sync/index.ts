@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+import { pulseIdentify, pulseTrack } from "../_shared/pulse.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,6 +12,17 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
+const APP_BASE_URL = Deno.env.get("APP_BASE_URL") || "https://play.sycamore.ng";
+
+function deriveFirstName(name: string | null | undefined, username: string | null | undefined, email: string): string {
+  if (name) {
+    const first = name.split(" ")[0].trim();
+    if (first.length >= 2 && /^[A-Za-z]/.test(first)) return first;
+  }
+  if (username && username.length >= 2) return username;
+  return email.split("@")[0];
+}
+
 interface InboundRecord {
   email?: string;
   name?: string;
@@ -18,6 +30,15 @@ interface InboundRecord {
   account_number?: string;
   active_customer_flag?: boolean;
   qualifying_transactions_count?: number;
+  // Extended traits from Core (passed to Pulse, not stored locally)
+  gender?: string;
+  state?: string;
+  country?: string;
+  date_of_birth?: string;
+  first_transaction_amount?: number;
+  first_transaction_product?: string;
+  first_transaction_date?: string;
+  referral_source?: string;
 }
 
 interface NormalisedRecord {
@@ -68,6 +89,54 @@ function authorise(req: Request): boolean {
   return provided === expected;
 }
 
+function extractPulseTraits(rec: InboundRecord): Record<string, unknown> {
+  const traits: Record<string, unknown> = {};
+  if (rec.name) traits.name = rec.name.trim();
+  if (rec.email) traits.email = rec.email.trim().toLowerCase();
+  if (rec.phone_number) traits.phone = rec.phone_number.trim();
+  if (rec.account_number) traits.account_number = rec.account_number.trim();
+  if (rec.gender) traits.gender = rec.gender;
+  if (rec.state) traits.state = rec.state;
+  if (rec.country) traits.country = rec.country;
+  if (rec.date_of_birth) traits.date_of_birth = rec.date_of_birth;
+  if (rec.active_customer_flag !== undefined) traits.active_customer = !!rec.active_customer_flag;
+  if (rec.qualifying_transactions_count !== undefined) traits.qualifying_transactions_count = rec.qualifying_transactions_count;
+  if (rec.first_transaction_amount !== undefined) traits.first_transaction_amount = rec.first_transaction_amount;
+  if (rec.first_transaction_product) traits.first_transaction_product = rec.first_transaction_product;
+  if (rec.first_transaction_date) traits.first_transaction_date = rec.first_transaction_date;
+  if (rec.referral_source) traits.referral_source = rec.referral_source;
+  traits.first_encounter = "sycamore_core";
+  return traits;
+}
+
+async function identifyAndTrackUser(rec: InboundRecord, existingUser: { id: string } | null) {
+  const email = (rec.email || "").trim().toLowerCase();
+  const externalId = existingUser?.id || email;
+  const traits = extractPulseTraits(rec);
+
+  await pulseIdentify(externalId, traits);
+
+  // Track account creation event (new user being synced from Core)
+  if (!existingUser) {
+    await pulseTrack(externalId, "sycamore_account_created", {
+      email,
+      country: rec.country || null,
+      state: rec.state || null,
+      gender: rec.gender || null,
+      source: "core_sync",
+    });
+  }
+
+  // Track first transaction if data is present
+  if (rec.first_transaction_amount && rec.first_transaction_product) {
+    await pulseTrack(externalId, "first_transaction_completed", {
+      amount: rec.first_transaction_amount,
+      product: rec.first_transaction_product,
+      date: rec.first_transaction_date || null,
+    });
+  }
+}
+
 async function upsertOne(row: NormalisedRecord) {
   const { error } = await supabase
     .from("synced_users")
@@ -106,7 +175,19 @@ Deno.serve(async (req: Request) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
+
+      // Check if user already exists (to determine if this is a new account)
+      const { data: existing } = await supabase
+        .from("synced_users")
+        .select("id")
+        .eq("email", result.row.email)
+        .maybeSingle();
+
       await upsertOne(result.row);
+
+      // Fire Pulse identify + events (non-blocking)
+      identifyAndTrackUser(body as InboundRecord, existing).catch(() => {});
+
       return new Response(
         JSON.stringify({ success: true, email: result.row.email, is_account_valid: result.row.is_account_valid }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -136,6 +217,18 @@ Deno.serve(async (req: Request) => {
         else rejected.push({ email: r.email || "", reason: result.reason });
       }
 
+      // Lookup existing users to determine new vs existing
+      const existingEmails = new Set<string>();
+      if (accepted.length > 0) {
+        const { data: existingRows } = await supabase
+          .from("synced_users")
+          .select("email")
+          .in("email", accepted.map((a) => a.email));
+        for (const row of existingRows || []) {
+          existingEmails.add(row.email);
+        }
+      }
+
       if (accepted.length > 0) {
         const { error } = await supabase
           .from("synced_users")
@@ -144,6 +237,14 @@ Deno.serve(async (req: Request) => {
             { onConflict: "email" },
           );
         if (error) throw new Error(error.message);
+      }
+
+      // Fire Pulse identify + events for all records (non-blocking)
+      for (const rec of records) {
+        const email = (rec.email || "").trim().toLowerCase();
+        if (!email) continue;
+        const isExisting = existingEmails.has(email);
+        identifyAndTrackUser(rec, isExisting ? { id: email } : null).catch(() => {});
       }
 
       return new Response(
@@ -173,7 +274,7 @@ Deno.serve(async (req: Request) => {
       }
       const { data: existing } = await supabase
         .from("synced_users")
-        .select("id")
+        .select("id, active_customer_flag")
         .eq("email", email)
         .maybeSingle();
       if (!existing) {
@@ -192,6 +293,37 @@ Deno.serve(async (req: Request) => {
         .update(update)
         .eq("id", existing.id);
       if (error) throw new Error(error.message);
+
+      // Track activation in Pulse
+      const wasInactive = !existing.active_customer_flag;
+      if (flag && wasInactive) {
+        pulseIdentify(existing.id, { active_customer: true, qualifying_transactions_count: txCount }).catch(() => {});
+        pulseTrack(existing.id, "customer_activated", {
+          email,
+          qualifying_transactions_count: txCount,
+        }).catch(() => {});
+      }
+
+      // Forward extended traits to Pulse if provided (first txn data, demographics)
+      if (body.gender || body.state || body.country || body.first_transaction_amount) {
+        const traits: Record<string, unknown> = {};
+        if (body.gender) traits.gender = body.gender;
+        if (body.state) traits.state = body.state;
+        if (body.country) traits.country = body.country;
+        if (body.first_transaction_amount) traits.first_transaction_amount = body.first_transaction_amount;
+        if (body.first_transaction_product) traits.first_transaction_product = body.first_transaction_product;
+        if (body.first_transaction_date) traits.first_transaction_date = body.first_transaction_date;
+        pulseIdentify(existing.id, traits).catch(() => {});
+
+        if (body.first_transaction_amount && body.first_transaction_product) {
+          pulseTrack(existing.id, "first_transaction_completed", {
+            amount: body.first_transaction_amount,
+            product: body.first_transaction_product,
+            date: body.first_transaction_date || null,
+          }).catch(() => {});
+        }
+      }
+
       return new Response(
         JSON.stringify({
           success: true,
@@ -248,13 +380,25 @@ Deno.serve(async (req: Request) => {
             .maybeSingle();
 
           let userEmail: string | null = null;
+          let userName: string | null = null;
+          let userUsername: string | null = null;
           if (sweepRow?.user_id) {
             const { data: usr } = await supabase
               .from("synced_users")
-              .select("email")
+              .select("email, name, username")
               .eq("id", sweepRow.user_id)
               .maybeSingle();
             userEmail = usr?.email || null;
+            userName = usr?.name || null;
+            userUsername = usr?.username || null;
+
+            // Track sweep result in Pulse
+            pulseTrack(sweepRow.user_id, "sweep_result_received", {
+              status: userStatus,
+              team_name: winning_team_name || null,
+              amount: u.amount || null,
+              match_id: match_id || null,
+            }).catch(() => {});
           }
 
           if (userEmail) {
@@ -262,19 +406,19 @@ Deno.serve(async (req: Request) => {
               ? "team_win_sweep_completed"
               : "team_win_sweep_skipped";
 
+            const firstName = deriveFirstName(userName, userUsername, userEmail);
             emailQueue.push({
               event_name: eventName,
               to_email: userEmail,
-              data: {
-                account_number: u.account_number,
+              data: userStatus === "completed" ? {
+                firstName,
                 amount: u.amount,
-                duration: u.duration,
-                team_name: winning_team_name || "",
-                team_code: winning_team_code || "",
-                match_id: match_id || null,
-                action: u.action,
-                failure_reason: u.failure_reason || null,
-                core_reference: u.core_reference || null,
+                teamName: winning_team_name || "",
+                savingsLink: `${APP_BASE_URL}/settings`,
+              } : {
+                firstName,
+                amount: u.amount,
+                fundLink: `${APP_BASE_URL}/settings`,
               },
             });
           }

@@ -2,7 +2,7 @@
 definePageMeta({ middleware: 'auth' })
 
 const supabase = useSupabase()
-const { user, isGuest, hasAccount, refreshUser } = useAuth()
+const { user, isGuest, hasAccount, refreshUser, trackPulseEvent } = useAuth()
 const { config: campaign, load: loadCampaign } = useCampaign()
 const { call } = useFunctions()
 
@@ -69,6 +69,7 @@ const confirmPick = async () => {
   pickError.value = ''
   try {
     await call('predictions/back-team', { email: user.value.email, team_id: confirmTeam.value.id })
+    trackPulseEvent('team_backed', { team_id: confirmTeam.value.id, team_name: confirmTeam.value.name })
     await refreshUser()
     confirmTeam.value = null
   } catch (e: any) {
@@ -89,6 +90,7 @@ const enableAutoSavings = async () => {
       amount: savingsAmount.value,
       duration: savingsDuration.value,
     })
+    trackPulseEvent('auto_savings_enabled', { amount: savingsAmount.value, duration: savingsDuration.value })
     await refreshUser()
     showSavingsModal.value = false
     savingsConsent.value = false
@@ -110,6 +112,7 @@ const disableAutoSavings = async () => {
       email: user.value.email,
       enabled: false,
     })
+    trackPulseEvent('auto_savings_disabled')
     await refreshUser()
   } finally {
     savingsLoading.value = false
@@ -127,7 +130,7 @@ const groups = computed(() => {
 })
 
 const backedTeamName = computed(() => user.value?.backed_team?.name || 'your team')
-const backedTeamWins = computed(() => (user.value as any)?.backed_team_wins || 0)
+const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
 </script>
 
 <template>

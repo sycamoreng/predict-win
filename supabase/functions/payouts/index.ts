@@ -20,6 +20,17 @@ const ROLE_PERMISSIONS: Record<string, AdminPermission[]> = {
   payouts: ["view_payouts"],
 };
 
+const APP_BASE_URL = Deno.env.get("APP_BASE_URL") || "https://play.sycamore.ng";
+
+function deriveFirstName(name: string | null | undefined, username: string | null | undefined, email: string): string {
+  if (name) {
+    const first = name.split(" ")[0].trim();
+    if (first.length >= 2 && /^[A-Za-z]/.test(first)) return first;
+  }
+  if (username && username.length >= 2) return username;
+  return email.split("@")[0];
+}
+
 async function adminHasPermission(email: string, permission: AdminPermission): Promise<boolean> {
   const { data } = await supabase
     .from("admin_users")
@@ -190,6 +201,170 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ success: true, weeks }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    if (route === "mark-paid") {
+      const targetEmail = (body.target_email || "").trim().toLowerCase();
+      const amount = Number(body.amount);
+      const rewardType = (body.reward_type || "").trim();
+
+      if (!targetEmail || !amount || !rewardType) {
+        return new Response(
+          JSON.stringify({ error: "target_email, amount, and reward_type required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const validTypes = ["Weekly Winner", "Weekly Runner-Up", "Matchday Random Draw", "Grand Prize"];
+      if (!validTypes.includes(rewardType)) {
+        return new Response(
+          JSON.stringify({ error: `reward_type must be one of: ${validTypes.join(", ")}` }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const { data: targetUser } = await supabase
+        .from("synced_users")
+        .select("id, email, name, username, account_number")
+        .eq("email", targetEmail)
+        .maybeSingle();
+
+      if (!targetUser) {
+        return new Response(
+          JSON.stringify({ error: "User not found" }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const acctNum = targetUser.account_number || "";
+      const last4 = acctNum.length >= 4 ? acctNum.slice(-4) : acctNum;
+
+      // Send payout notification email
+      const SEND_EMAIL_URL = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-email`;
+      try {
+        await fetch(SEND_EMAIL_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({
+            event_name: "payout_notification",
+            to_email: targetUser.email,
+            to_name: targetUser.name || "",
+            dynamic_template_data: {
+              firstName: deriveFirstName(targetUser.name, targetUser.username, targetUser.email),
+              rewardType: rewardType,
+              amount,
+              lastFourDigits: last4,
+              walletLink: `${APP_BASE_URL}/settings`,
+            },
+          }),
+        });
+      } catch { /* best-effort */ }
+
+      // Log the event
+      await supabase.from("analytics_events").insert({
+        user_id: targetUser.id,
+        event_name: "payout_notification",
+        properties: {
+          admin_email: email,
+          reward_type: rewardType,
+          amount,
+          account_number: acctNum,
+        },
+        delivered_to_netcore: false,
+      });
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          user: targetEmail,
+          amount,
+          reward_type: rewardType,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    if (route === "mark-paid-bulk") {
+      const recipients: { email: string; amount: number; reward_type: string }[] = Array.isArray(body.recipients) ? body.recipients : [];
+      if (recipients.length === 0) {
+        return new Response(
+          JSON.stringify({ error: "recipients[] required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      if (recipients.length > 200) {
+        return new Response(
+          JSON.stringify({ error: "max 200 recipients per request" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const emails = recipients.map((r) => r.email.trim().toLowerCase());
+      const { data: users } = await supabase
+        .from("synced_users")
+        .select("id, email, name, username, account_number")
+        .in("email", emails);
+
+      const userMap = new Map((users || []).map((u) => [u.email, u]));
+      const results: { email: string; sent: boolean; error?: string }[] = [];
+      const SEND_EMAIL_URL = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-email`;
+
+      for (const r of recipients) {
+        const rEmail = r.email.trim().toLowerCase();
+        const u = userMap.get(rEmail);
+        if (!u) {
+          results.push({ email: rEmail, sent: false, error: "user_not_found" });
+          continue;
+        }
+
+        const acctNum = u.account_number || "";
+        const last4 = acctNum.length >= 4 ? acctNum.slice(-4) : acctNum;
+
+        try {
+          await fetch(SEND_EMAIL_URL, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            },
+            body: JSON.stringify({
+              event_name: "payout_notification",
+              to_email: u.email,
+              to_name: u.name || "",
+              dynamic_template_data: {
+                firstName: deriveFirstName(u.name, u.username, u.email),
+                rewardType: r.reward_type,
+                amount: r.amount,
+                lastFourDigits: last4,
+                walletLink: `${APP_BASE_URL}/settings`,
+              },
+            }),
+          });
+          results.push({ email: rEmail, sent: true });
+        } catch {
+          results.push({ email: rEmail, sent: false, error: "send_failed" });
+        }
+
+        await supabase.from("analytics_events").insert({
+          user_id: u.id,
+          event_name: "payout_notification",
+          properties: {
+            admin_email: email,
+            reward_type: r.reward_type,
+            amount: r.amount,
+            account_number: acctNum,
+          },
+          delivered_to_netcore: false,
+        });
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, processed: results.length, results }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     return new Response(JSON.stringify({ error: "Unknown route" }), {

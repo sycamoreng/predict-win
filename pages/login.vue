@@ -9,7 +9,7 @@ const agreedToTerms = ref(false)
 const showNewUserToast = ref(false)
 const showUsernamePrompt = ref(false)
 
-const { setSession, user } = useAuth()
+const { setSession, user, trackPulseEvent } = useAuth()
 const { call } = useFunctions()
 const router = useRouter()
 
@@ -31,6 +31,7 @@ const requestOtp = async () => {
   try {
     const res = await call('auth-otp/request', { email: email.value })
     devCode.value = res.devCode || ''
+    trackPulseEvent('otp_requested', { is_new_user: !!res.isNewUser })
     if (res.isNewUser) {
       showNewUserToast.value = true
       setTimeout(() => { showNewUserToast.value = false }, 6000)
@@ -53,6 +54,7 @@ const verifyOtp = async () => {
   try {
     const res = await call('auth-otp/verify', { email: email.value, code: code.value })
     setSession(res.user)
+    trackPulseEvent('signed_in', { method: 'otp', is_guest: !!res.user.is_guest })
     if (!res.user.is_guest && !res.user.username) {
       showUsernamePrompt.value = true
     } else {

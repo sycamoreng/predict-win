@@ -26,8 +26,18 @@ const supabase = createClient(
 const CORE_API_BASE = (Deno.env.get("SYCAMORE_CORE_API_URL") || "https://api.sycamore.ng/api/v1").replace(/\/+$/, "");
 const CORE_API_KEY = Deno.env.get("SYCAMORE_CORE_API_KEY") || "";
 const SEND_EMAIL_URL = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-email`;
+const APP_BASE_URL = Deno.env.get("APP_BASE_URL") || "https://play.sycamore.ng";
 
-async function logEvent(userId: string | null, eventName: string, properties: Record<string, unknown>) {
+function deriveFirstName(name: string | null | undefined, username: string | null | undefined, email: string): string {
+  if (name) {
+    const first = name.split(" ")[0].trim();
+    if (first.length >= 2 && /^[A-Za-z]/.test(first)) return first;
+  }
+  if (username && username.length >= 2) return username;
+  return email.split("@")[0];
+}
+
+async function logEvent(userId: string | null, eventName: string, properties: Record<string, unknown>, templateData?: Record<string, unknown>) {
   const email = properties.email as string | undefined;
   let delivered = false;
 
@@ -43,7 +53,7 @@ async function logEvent(userId: string | null, eventName: string, properties: Re
           event_name: eventName,
           to_email: email,
           to_name: properties.name || "",
-          dynamic_template_data: { ...properties, user_id: userId },
+          dynamic_template_data: templateData || { ...properties, user_id: userId },
         }),
       });
       const result = await res.json().catch(() => null);
@@ -92,7 +102,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: optedInUsers } = await supabase
       .from("synced_users")
-      .select("id, email, account_number, auto_savings_amount, auto_savings_duration, backed_team_wins")
+      .select("id, email, name, username, account_number, auto_savings_amount, auto_savings_duration, backed_team_wins")
       .eq("backed_team_id", winning_team_id)
       .eq("auto_savings_enabled", true);
 
@@ -188,6 +198,7 @@ Deno.serve(async (req: Request) => {
 
         await logEvent(u.id, "team_win_sweep_skipped", {
           email: u.email,
+          name: u.name || "",
           account_number: u.account_number,
           team_id: winning_team_id,
           team_name: team.name,
@@ -195,6 +206,10 @@ Deno.serve(async (req: Request) => {
           amount: u.auto_savings_amount,
           duration: u.auto_savings_duration,
           reason: "core_unreachable",
+        }, {
+          firstName: deriveFirstName(u.name, u.username, u.email),
+          amount: u.auto_savings_amount,
+          fundLink: `${APP_BASE_URL}/settings`,
         });
       }
     } else {
@@ -227,8 +242,19 @@ Deno.serve(async (req: Request) => {
               const eventName = ru.status === "completed"
                 ? "team_win_sweep_completed"
                 : "team_win_sweep_skipped";
+              const tplData = ru.status === "completed" ? {
+                firstName: deriveFirstName(localUser.name, localUser.username, localUser.email),
+                amount: localUser.auto_savings_amount,
+                teamName: team.name,
+                savingsLink: `${APP_BASE_URL}/settings`,
+              } : {
+                firstName: deriveFirstName(localUser.name, localUser.username, localUser.email),
+                amount: localUser.auto_savings_amount,
+                fundLink: `${APP_BASE_URL}/settings`,
+              };
               await logEvent(localUser.id, eventName, {
                 email: localUser.email,
+                name: localUser.name || "",
                 account_number: localUser.account_number,
                 team_id: winning_team_id,
                 team_name: team.name,
@@ -237,7 +263,7 @@ Deno.serve(async (req: Request) => {
                 duration: localUser.auto_savings_duration,
                 core_reference: ru.core_reference || null,
                 failure_reason: ru.failure_reason || null,
-              });
+              }, tplData);
             }
           }
         }

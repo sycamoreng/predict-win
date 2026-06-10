@@ -2,7 +2,7 @@
 definePageMeta({ middleware: 'auth' })
 
 const supabase = useSupabase()
-const { user, isGuest, hasAccount, displayName } = useAuth()
+const { user, isGuest, hasAccount, displayName, trackPulseEvent } = useAuth()
 const { config: campaign, load: loadCampaign } = useCampaign()
 const copiedAccount = ref(false)
 
@@ -35,6 +35,7 @@ const loadData = async () => {
 
 onMounted(() => {
   loadData()
+  trackPulseEvent('predictions_viewed')
 })
 
 const weekRange = computed(() => {
@@ -159,7 +160,7 @@ const copyAccountNumber = async () => {
         <button
           v-for="tab in tabs"
           :key="tab.id"
-          @click="view = tab.id"
+          @click="view = tab.id; trackPulseEvent('predictions_tab_switched', { tab: tab.id })"
           :class="[
             'px-4 py-2 rounded-lg text-sm font-semibold transition',
             view === tab.id ? 'bg-sky-600 text-white shadow-pop' : 'text-ink-600 hover:bg-ink-100',

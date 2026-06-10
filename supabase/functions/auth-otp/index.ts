@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+import { pulseIdentify, pulseTrack } from "../_shared/pulse.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -216,13 +217,39 @@ Deno.serve(async (req: Request) => {
         .maybeSingle();
 
       if (user) {
+        // Existing Sycamore user signing in -- identify in Pulse
+        pulseIdentify(user.id, {
+          email: user.email,
+          name: user.name,
+          active_customer: !!user.active_customer_flag,
+          has_account: !!user.account_number,
+          first_encounter: "sycamore_core",
+        }).catch(() => {});
+        pulseTrack(user.id, "signed_in_server", {
+          method: "otp",
+          is_guest: false,
+          is_existing_sycamore_user: true,
+        }).catch(() => {});
+
         return new Response(JSON.stringify({ success: true, user }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
+      // Guest user (no Sycamore account) -- first encounter is predictor app
+      const guestId = `guest_${email}`;
+      pulseIdentify(guestId, {
+        email,
+        first_encounter: "predictor_app",
+      }).catch(() => {});
+      pulseTrack(guestId, "registered", {
+        method: "otp",
+        is_guest: true,
+        first_encounter: "predictor_app",
+      }).catch(() => {});
+
       const guestUser = {
-        id: `guest_${email}`,
+        id: guestId,
         email,
         name: email.split("@")[0],
         username: null,
@@ -230,6 +257,7 @@ Deno.serve(async (req: Request) => {
         active_customer_flag: false,
         qualifying_transactions_count: 0,
         is_account_valid: false,
+        is_staff: false,
         total_points: 0,
         backed_team_id: null,
         backed_team: null,

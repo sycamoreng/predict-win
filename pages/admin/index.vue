@@ -75,14 +75,14 @@ const toggleCampaignField = async (field: 'predictions_enabled' | 'leaderboard_e
   if (!campaignConfig.value) return
   const newVal = !campaignConfig.value[field]
   campaignLoading.value = true
-  const { error: err } = await supabase
-    .from('campaign_config')
-    .update({ [field]: newVal, updated_at: new Date().toISOString() })
-    .eq('id', 1)
-  if (err) {
-    error.value = `Failed to update ${field}: ${err.message}`
-  } else {
+  try {
+    await call('campaign-config-update', {
+      admin_email: admin.value!.email,
+      fields: { [field]: newVal },
+    })
     campaignConfig.value[field] = newVal
+  } catch (err: any) {
+    error.value = `Failed to update ${field}: ${err.message}`
   }
   campaignLoading.value = false
 }
@@ -90,11 +90,12 @@ const toggleCampaignField = async (field: 'predictions_enabled' | 'leaderboard_e
 const updateCampaignName = async () => {
   if (!campaignConfig.value) return
   campaignLoading.value = true
-  const { error: err } = await supabase
-    .from('campaign_config')
-    .update({ campaign_name: campaignConfig.value.campaign_name, updated_at: new Date().toISOString() })
-    .eq('id', 1)
-  if (err) {
+  try {
+    await call('campaign-config-update', {
+      admin_email: admin.value!.email,
+      fields: { campaign_name: campaignConfig.value.campaign_name },
+    })
+  } catch (err: any) {
     error.value = `Failed to update campaign name: ${err.message}`
   }
   campaignLoading.value = false
@@ -373,6 +374,64 @@ const exportSingleCsv = () => {
   const date = (payoutSingle.value.week_start || '').slice(0, 10)
   downloadCsv(`payout-week-${date}.csv`, payoutSingle.value.winners)
 }
+
+// --- Mark Paid ---
+const markPaidEmail = ref('')
+const markPaidAmount = ref<number | null>(null)
+const markPaidType = ref('Weekly Winner')
+const markPaidLoading = ref(false)
+const markPaidResult = ref<{ success: boolean; message: string } | null>(null)
+
+const rewardTypes = ['Weekly Winner', 'Weekly Runner-Up', 'Matchday Random Draw', 'Grand Prize']
+
+const markSinglePaid = async () => {
+  if (!admin.value || !markPaidEmail.value || !markPaidAmount.value) return
+  markPaidLoading.value = true
+  markPaidResult.value = null
+  error.value = ''
+  try {
+    await call('payouts/mark-paid', {
+      email: admin.value.email,
+      target_email: markPaidEmail.value.trim().toLowerCase(),
+      amount: markPaidAmount.value,
+      reward_type: markPaidType.value,
+    })
+    markPaidResult.value = { success: true, message: `Payout notification sent to ${markPaidEmail.value}` }
+    markPaidEmail.value = ''
+    markPaidAmount.value = null
+  } catch (e) {
+    markPaidResult.value = { success: false, message: (e as Error).message }
+  } finally {
+    markPaidLoading.value = false
+  }
+}
+
+const markBulkPaid = async (winners: any[], rewardType: string, amount: number) => {
+  if (!admin.value || !winners.length) return
+  markPaidLoading.value = true
+  markPaidResult.value = null
+  error.value = ''
+  try {
+    const recipients = winners.map((w) => ({
+      email: w.email,
+      amount,
+      reward_type: rewardType,
+    }))
+    const res = await call('payouts/mark-paid-bulk', {
+      email: admin.value.email,
+      recipients,
+    })
+    const sentCount = (res.results || []).filter((r: any) => r.sent).length
+    markPaidResult.value = { success: true, message: `Sent ${sentCount}/${recipients.length} payout notifications` }
+  } catch (e) {
+    markPaidResult.value = { success: false, message: (e as Error).message }
+  } finally {
+    markPaidLoading.value = false
+  }
+}
+
+const bulkPayoutAmount = ref<number>(100000)
+const bulkPayoutType = ref('Weekly Winner')
 
 const exportAllWeeksCsv = () => {
   const all: any[] = []
@@ -1020,6 +1079,75 @@ watch(activeTab, (tab) => {
 
       <!-- PAYOUTS TAB -->
       <div v-if="activeTab === 'payouts'" class="space-y-5">
+        <!-- Mark Paid section -->
+        <div class="card p-5 space-y-4">
+          <div>
+            <h2 class="font-bold text-ink-900">Mark as paid</h2>
+            <p class="text-sm text-ink-500">Send payout confirmation emails to winners. Individual or bulk.</p>
+          </div>
+
+          <!-- Individual payout -->
+          <div class="rounded-2xl border border-ink-100 p-4 space-y-3">
+            <div class="text-xs font-semibold uppercase tracking-wider text-ink-400">Individual payout notification</div>
+            <div class="grid sm:grid-cols-3 gap-3">
+              <div>
+                <label class="label !mb-1">Recipient email</label>
+                <input v-model="markPaidEmail" type="email" class="input !py-2" placeholder="user@email.com" />
+              </div>
+              <div>
+                <label class="label !mb-1">Amount (NGN)</label>
+                <input v-model.number="markPaidAmount" type="number" min="0" class="input !py-2" placeholder="100000" />
+              </div>
+              <div>
+                <label class="label !mb-1">Reward type</label>
+                <select v-model="markPaidType" class="input !py-2">
+                  <option v-for="t in rewardTypes" :key="t" :value="t">{{ t }}</option>
+                </select>
+              </div>
+            </div>
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <p v-if="markPaidResult" :class="['text-sm', markPaidResult.success ? 'text-mint-700' : 'text-coral-600']">
+                  {{ markPaidResult.message }}
+                </p>
+              </div>
+              <button
+                @click="markSinglePaid"
+                :disabled="markPaidLoading || !markPaidEmail || !markPaidAmount"
+                class="btn-primary !py-2 !px-4 text-sm"
+              >
+                {{ markPaidLoading ? 'Sending...' : 'Send notification' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Bulk payout from winners -->
+          <div v-if="payoutSingle?.winners?.length" class="rounded-2xl border border-ink-100 p-4 space-y-3">
+            <div class="text-xs font-semibold uppercase tracking-wider text-ink-400">Bulk notify current week winners</div>
+            <p class="text-sm text-ink-500">Send payout notifications to all {{ payoutSingle.winners.length }} winners shown below.</p>
+            <div class="flex flex-wrap items-end gap-3">
+              <div>
+                <label class="label !mb-1">Amount per winner (NGN)</label>
+                <input v-model.number="bulkPayoutAmount" type="number" min="0" class="input !py-2 w-36" />
+              </div>
+              <div>
+                <label class="label !mb-1">Reward type</label>
+                <select v-model="bulkPayoutType" class="input !py-2">
+                  <option v-for="t in rewardTypes" :key="t" :value="t">{{ t }}</option>
+                </select>
+              </div>
+              <button
+                @click="markBulkPaid(payoutSingle.winners, bulkPayoutType, bulkPayoutAmount)"
+                :disabled="markPaidLoading || !bulkPayoutAmount"
+                class="btn-primary !py-2 !px-4 text-sm"
+              >
+                {{ markPaidLoading ? 'Sending...' : `Notify all ${payoutSingle.winners.length} winners` }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Weekly payout export (existing) -->
         <div class="card p-5 space-y-4">
           <div>
             <h2 class="font-bold text-ink-900">Weekly payout export</h2>

@@ -15,9 +15,15 @@ interface SessionUser {
   active_customer_flag: boolean
   qualifying_transactions_count: number
   is_account_valid: boolean
+  is_staff: boolean
   total_points: number
   backed_team_id: string | null
   backed_team?: { id: string; name: string; flag_emoji: string; code: string } | null
+  backed_team_wins?: number
+  backed_team_locked_at?: string | null
+  auto_savings_enabled?: boolean
+  auto_savings_amount?: number | null
+  auto_savings_duration?: number | null
   is_guest?: boolean
 }
 
@@ -46,7 +52,9 @@ export const useAuth = () => {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
       try {
-        user.value = JSON.parse(raw)
+        const parsed = JSON.parse(raw)
+        user.value = parsed
+        identifyPulseUser(parsed)
       } catch {
         localStorage.removeItem(STORAGE_KEY)
       }
@@ -61,11 +69,47 @@ export const useAuth = () => {
     }
   }
 
+  const identifyPulseUser = (u: SessionUser) => {
+    if (!import.meta.client) return
+    try {
+      const { $pulse } = useNuxtApp() as any
+      if (!$pulse) return
+      $pulse.identify(u.id, {
+        email: u.email,
+        name: u.name,
+        username: u.username || undefined,
+        is_guest: !!u.is_guest,
+        is_staff: !!u.is_staff,
+        has_account: !!u.account_number,
+        active_customer: !!u.active_customer_flag,
+      })
+    } catch {}
+  }
+
+  const resetPulse = () => {
+    if (!import.meta.client) return
+    try {
+      const { $pulse } = useNuxtApp() as any
+      if (!$pulse) return
+      $pulse.reset()
+    } catch {}
+  }
+
+  const trackPulseEvent = (name: string, properties?: Record<string, unknown>) => {
+    if (!import.meta.client) return
+    try {
+      const { $pulse } = useNuxtApp() as any
+      if (!$pulse) return
+      $pulse.track(name, properties)
+    } catch {}
+  }
+
   const setSession = (u: SessionUser | null) => {
     user.value = u
     if (!import.meta.client) return
     if (u) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(u))
+      identifyPulseUser(u)
     } else {
       localStorage.removeItem(STORAGE_KEY)
     }
@@ -83,6 +127,7 @@ export const useAuth = () => {
 
   const isGuest = computed(() => !!user.value?.is_guest)
   const hasAccount = computed(() => !!user.value?.account_number)
+  const isStaff = computed(() => !!user.value?.is_staff)
   const isSycamoreUser = computed(() => !!user.value && !isGuest.value && hasAccount.value)
   const needsUsername = computed(() => !!user.value && !user.value.is_guest && !user.value.username)
 
@@ -134,6 +179,7 @@ export const useAuth = () => {
     !!admin.value && admin.value.permissions.includes(permission)
 
   const logout = () => {
+    resetPulse()
     setSession(null)
   }
 
@@ -141,5 +187,5 @@ export const useAuth = () => {
     setAdminSession(null)
   }
 
-  return { user, admin, isGuest, hasAccount, isSycamoreUser, needsUsername, displayName, setSession, setAdminSession, loadFromStorage, refreshUser, logout, adminLogout, hasPermission }
+  return { user, admin, isGuest, hasAccount, isStaff, isSycamoreUser, needsUsername, displayName, setSession, setAdminSession, loadFromStorage, refreshUser, logout, adminLogout, hasPermission, trackPulseEvent }
 }

@@ -3,7 +3,7 @@ const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ done: [username: string] }>()
 
 const supabase = useSupabase()
-const { user, setSession } = useAuth()
+const { user, setSession, trackPulseEvent } = useAuth()
 const { generate } = useRandomUsername()
 
 const username = ref('')
@@ -51,6 +51,7 @@ const save = async () => {
 
   const updated = { ...user.value!, username: trimmed }
   setSession(updated)
+  trackPulseEvent('username_set', { username: trimmed, method: 'manual' })
   emit('done', trimmed)
   saving.value = false
 }
@@ -72,10 +73,12 @@ const skip = async () => {
       .eq('id', user.value!.id)
     const updated = { ...user.value!, username: retry }
     setSession(updated)
+    trackPulseEvent('username_set', { username: retry, method: 'skipped' })
     emit('done', retry)
   } else {
     const updated = { ...user.value!, username: fallback }
     setSession(updated)
+    trackPulseEvent('username_set', { username: fallback, method: 'skipped' })
     emit('done', fallback)
   }
   saving.value = false

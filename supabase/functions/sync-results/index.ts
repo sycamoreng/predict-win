@@ -16,8 +16,18 @@ const DEFAULT_LEAGUE = 1;
 const DEFAULT_SEASON = 2026;
 const COMPLETED_STATUSES = new Set(["FT", "AET", "PEN"]);
 const SEND_EMAIL_URL = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-email`;
+const APP_BASE_URL = Deno.env.get("APP_BASE_URL") || "https://play.sycamore.ng";
 
-async function logEvent(userId: string | null, eventName: string, properties: Record<string, unknown>) {
+function deriveFirstName(name: string | null | undefined, username: string | null | undefined, email: string): string {
+  if (name) {
+    const first = name.split(" ")[0].trim();
+    if (first.length >= 2 && /^[A-Za-z]/.test(first)) return first;
+  }
+  if (username && username.length >= 2) return username;
+  return email.split("@")[0];
+}
+
+async function logEvent(userId: string | null, eventName: string, properties: Record<string, unknown>, templateData?: Record<string, unknown>) {
   const email = properties.email as string | undefined;
   let delivered = false;
 
@@ -33,7 +43,7 @@ async function logEvent(userId: string | null, eventName: string, properties: Re
           event_name: eventName,
           to_email: email,
           to_name: properties.name || "",
-          dynamic_template_data: { ...properties, user_id: userId },
+          dynamic_template_data: templateData || { ...properties, user_id: userId },
         }),
       });
       const result = await res.json().catch(() => null);
@@ -242,7 +252,7 @@ async function rescoreMatch(matchId: string) {
 
   const { data: preds } = await supabase
     .from("predictions")
-    .select("*, user:synced_users!predictions_user_id_fkey(email, backed_team_id)")
+    .select("*, user:synced_users!predictions_user_id_fkey(email, name, username, backed_team_id)")
     .eq("match_id", matchId);
 
   if (!preds) return;
@@ -255,25 +265,30 @@ async function rescoreMatch(matchId: string) {
         : null;
 
   for (const p of preds) {
-    let pts = 0;
+    let matchResultPoints = 0;
+    let firstGoalscorerPoints = 0;
+    let exactScorelinePoints = 0;
+
     const winnerCorrect =
       (winnerId === null && p.predicted_winner_team_id === null) ||
       (winnerId !== null && p.predicted_winner_team_id === winnerId);
-    if (winnerCorrect) pts += 5;
+    if (winnerCorrect) matchResultPoints = 5;
 
     if (
       match.first_to_score_team_id &&
       p.predicted_first_to_score_team_id === match.first_to_score_team_id
     ) {
-      pts += 10;
+      firstGoalscorerPoints = 10;
     }
 
     if (
       p.predicted_home_score === match.home_score &&
       p.predicted_away_score === match.away_score
     ) {
-      pts += 15;
+      exactScorelinePoints = 15;
     }
+
+    const pts = matchResultPoints + firstGoalscorerPoints + exactScorelinePoints;
 
     await supabase
       .from("predictions")
@@ -281,8 +296,14 @@ async function rescoreMatch(matchId: string) {
       .eq("id", p.id);
 
     const u = p.user as any;
+    const homeTeam = (match.home_team as any).name || (match.home_team as any).code;
+    const awayTeam = (match.away_team as any).name || (match.away_team as any).code;
+    const actualScore = `${match.home_score}-${match.away_score}`;
+    const predictedScore = `${p.predicted_home_score}-${p.predicted_away_score}`;
+
     await logEvent(p.user_id, pts > 0 ? "prediction_correct" : "prediction_incorrect", {
       email: u?.email,
+      name: u?.name || "",
       match_id: match.id,
       match: `${(match.home_team as any).code}-${(match.away_team as any).code}`,
       predicted_home: p.predicted_home_score,
@@ -293,13 +314,39 @@ async function rescoreMatch(matchId: string) {
       actual_away: match.away_score,
       points_earned: pts,
       backed_team_id: u?.backed_team_id || null,
+    }, pts > 0 ? {
+      firstName: deriveFirstName(u?.name, u?.username, u?.email || ""),
+      teamA: homeTeam,
+      teamB: awayTeam,
+      actualScore,
+      predictedScore,
+      matchResultPoints,
+      firstGoalscorerPoints,
+      exactScorelinePoints,
+      pointsEarned: pts,
+      totalPoints: pts,
+      leaderboardLink: `${APP_BASE_URL}/leaderboard`,
+    } : {
+      firstName: deriveFirstName(u?.name, u?.username, u?.email || ""),
+      teamA: homeTeam,
+      teamB: awayTeam,
+      actualScore,
+      predictedScore,
+      predictLink: `${APP_BASE_URL}/predict`,
     });
   }
 
   if (winnerId) {
+    const { data: winningTeam } = await supabase
+      .from("teams")
+      .select("name, code")
+      .eq("id", winnerId)
+      .maybeSingle();
+    const winnerName = winningTeam?.name || winningTeam?.code || "Your Team";
+
     const { data: backers } = await supabase
       .from("synced_users")
-      .select("id, email, backed_team_wins")
+      .select("id, email, name, username, backed_team_wins")
       .eq("backed_team_id", winnerId);
 
     for (const b of backers || []) {
@@ -310,11 +357,18 @@ async function rescoreMatch(matchId: string) {
 
       await logEvent(b.id, "team_won", {
         email: b.email,
+        name: b.name || "",
         match_id: match.id,
         match: `${(match.home_team as any).code}-${(match.away_team as any).code}`,
         team_id: winnerId,
+        team_name: winnerName,
         score: `${match.home_score}-${match.away_score}`,
         backed_team_wins: (b.backed_team_wins || 0) + 1,
+      }, {
+        firstName: deriveFirstName(b.name, b.username, b.email),
+        teamName: winnerName,
+        amount: null,
+        savingsLink: `${APP_BASE_URL}/settings`,
       });
     }
 

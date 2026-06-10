@@ -31,7 +31,7 @@ const initials = computed(() => {
     .toUpperCase()
 })
 
-const backedTeamWins = computed(() => (user.value as any)?.backed_team_wins || 0)
+const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
 
 const copyAccountNumber = async () => {
   if (!user.value?.account_number) return
@@ -115,6 +115,7 @@ const onLogout = async () => {
               <span class="ml-auto text-xs text-sky-600 font-bold">{{ backedTeamWins }} {{ backedTeamWins === 1 ? 'win' : 'wins' }}</span>
             </div>
             <NuxtLink v-if="!isGuest" to="/team" class="block px-3 py-2 text-sm rounded-lg hover:bg-ink-50 text-ink-700">My Team</NuxtLink>
+            <NuxtLink to="/history" class="block px-3 py-2 text-sm rounded-lg hover:bg-ink-50 text-ink-700">Prediction History</NuxtLink>
             <NuxtLink v-if="!isGuest" to="/settings" class="block px-3 py-2 text-sm rounded-lg hover:bg-ink-50 text-ink-700">Settings</NuxtLink>
             <a v-if="isGuest" href="https://appsflyer.sycamore.ng/Qthc/worldcup_website" target="_blank" rel="noreferrer" class="block px-3 py-2 text-sm rounded-lg hover:bg-sky-50 text-sky-700">
               Get Sycamore App

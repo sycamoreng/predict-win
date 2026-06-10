@@ -1,10 +1,14 @@
 <script setup lang="ts">
-const { user } = useAuth()
+const { user, trackPulseEvent } = useAuth()
 const router = useRouter()
 
 onMounted(() => {
   if (user.value) router.replace('/team')
 })
+
+const trackCta = (cta: string) => {
+  trackPulseEvent('cta_clicked', { cta, page: 'landing' })
+}
 
 const steps = [
   { num: '01', title: 'Get App & Verify', desc: 'Sign up and complete your BVN verification.', bg: 'bg-[#e2f7ee]', img: 'Group.png' },
@@ -63,12 +67,14 @@ const getImgUrl = (filename: string) => `/${filename}`
         <div class="mt-8 flex flex-wrap gap-3">
           <NuxtLink
             to="/login"
+            @click="trackCta('get_started')"
             class="inline-flex items-center justify-center rounded-full bg-white text-[#0c2233] font-bold px-7 py-3.5 text-sm hover:bg-white/90 transition shadow-[0_4px_20px_rgba(255,255,255,0.15)]"
           >
             Get Started
           </NuxtLink>
           <NuxtLink
             to="/leaderboard"
+            @click="trackCta('view_leaderboard')"
             class="inline-flex items-center justify-center rounded-full bg-white/8 border border-white/20 text-white font-bold px-7 py-3.5 text-sm hover:bg-white/15 transition backdrop-blur-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]"
           >
             View leaderboard
@@ -174,6 +180,7 @@ const getImgUrl = (filename: string) => `/${filename}`
           </p>
           <NuxtLink
             to="/login"
+            @click="trackCta('start_predicting')"
             class="mt-7 self-start inline-flex items-center justify-center rounded-full bg-ink-900 text-white font-bold px-7 py-3.5 text-sm hover:bg-ink-800 transition shadow-[0_4px_12px_rgba(31,32,48,0.2)]"
           >
             Start Predicting

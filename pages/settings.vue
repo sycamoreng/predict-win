@@ -2,7 +2,8 @@
 definePageMeta({ middleware: 'auth' })
 
 const supabase = useSupabase()
-const { user, setSession, isGuest, refreshUser } = useAuth()
+const functions = useFunctions()
+const { user, setSession, isGuest, refreshUser, trackPulseEvent } = useAuth()
 const { generate } = useRandomUsername()
 
 const username = ref('')
@@ -58,22 +59,32 @@ const save = async () => {
     tiktok: stripAt(tiktok.value) || null,
   }
 
-  const { error: dbError } = await supabase
-    .from('synced_users')
-    .update({ username: trimmedUsername, social_handles })
-    .eq('id', user.value!.id)
-
-  if (dbError) {
-    if (dbError.message.includes('unique') || dbError.message.includes('duplicate')) {
+  try {
+    await functions.call('profile-update', {
+      user_id: user.value!.id,
+      email: user.value!.email,
+      username: trimmedUsername,
+      social_handles,
+    })
+  } catch (err: any) {
+    const msg = err.message || ''
+    if (msg.includes('already taken') || msg.includes('username_taken')) {
       usernameError.value = 'This username is already taken.'
     } else {
-      error.value = dbError.message
+      error.value = msg
     }
     saving.value = false
     return
   }
 
   await refreshUser()
+  trackPulseEvent('profile_updated', {
+    username_changed: trimmedUsername !== (user.value?.username || ''),
+    has_twitter: !!social_handles.twitter,
+    has_instagram: !!social_handles.instagram,
+    has_threads: !!social_handles.threads,
+    has_tiktok: !!social_handles.tiktok,
+  })
   saving.value = false
   saved.value = true
   setTimeout(() => { saved.value = false }, 3000)

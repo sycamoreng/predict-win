@@ -8,16 +8,19 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>()
 
 const { canNativeShare, nativeShare, shareToTwitter, shareToWhatsApp, shareToThreads, copyToClipboard, siteUrl } = useShare()
+const { trackPulseEvent } = useAuth()
 const copied = ref(false)
 
 const shareUrl = computed(() => props.url || siteUrl)
 
 const doNativeShare = async () => {
+  trackPulseEvent('shared', { method: 'native', title: props.title })
   await nativeShare({ text: props.text, url: shareUrl.value, title: props.title })
   emit('close')
 }
 
 const doCopy = async () => {
+  trackPulseEvent('shared', { method: 'clipboard', title: props.title })
   await copyToClipboard({ text: props.text, url: shareUrl.value })
   copied.value = true
   setTimeout(() => (copied.value = false), 2000)
@@ -30,6 +33,7 @@ const platforms = [
 ]
 
 const shareTo = (platform: string) => {
+  trackPulseEvent('shared', { method: platform, title: props.title })
   const opts = { text: props.text, url: shareUrl.value, title: props.title }
   if (platform === 'whatsapp') shareToWhatsApp(opts)
   else if (platform === 'twitter') shareToTwitter(opts)
