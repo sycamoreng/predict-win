@@ -895,7 +895,7 @@ Deno.serve(async (req: Request) => {
           }, {
             firstName: deriveFirstName(u.name, u.username, u.email),
             teamName: team.name,
-            predictorLink: `${APP_BASE_URL}/predict`,
+            newTeamLink: `${APP_BASE_URL}/team`,
           });
         }
       }

@@ -136,16 +136,13 @@ const pointsBreakdown = (p: any) => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-50">
-    <AppHeader />
-
-    <main class="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-5">
-      <div class="flex items-center justify-between gap-3">
-        <div>
-          <h1 class="text-xl font-extrabold text-ink-900">Prediction History</h1>
-          <p class="text-sm text-ink-500">Review all your past predictions and points earned.</p>
-        </div>
+  <div class="space-y-5">
+    <div class="flex items-center justify-between gap-3">
+      <div>
+        <h1 class="text-xl font-extrabold text-ink-900">Prediction History</h1>
+        <p class="text-sm text-ink-500">Review all your past predictions and points earned.</p>
       </div>
+    </div>
 
       <!-- Filter controls -->
       <div class="card p-4 space-y-3">
@@ -270,6 +267,5 @@ const pointsBreakdown = (p: any) => {
           </div>
         </div>
       </div>
-    </main>
   </div>
 </template>
