@@ -114,7 +114,7 @@
     <div class="text-center py-6 border-t border-ink-100">
       <p class="text-sm text-ink-500">
         Questions about these terms? Contact
-        <a href="mailto:support@sycamore.ng" class="text-sky-600 font-semibold hover:underline">support@sycamore.ng</a>
+        <a href="mailto:complaints@sycamore.ng" class="text-sky-600 font-semibold hover:underline">complaints@sycamore.ng</a>
       </p>
       <NuxtLink to="/faq" class="inline-block mt-2 text-sm font-semibold text-ink-600 hover:text-ink-800">
         View FAQs

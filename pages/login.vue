@@ -158,7 +158,7 @@ const onUsernameDone = () => {
                 />
                 <span class="text-xs text-ink-500 leading-relaxed group-hover:text-ink-700 transition">
                   I agree to the
-                  <a href="https://sycamore.ng/terms" target="_blank" rel="noreferrer" class="text-sky-600 underline underline-offset-2">Terms &amp; Conditions</a>
+                  <NuxtLink to="/terms" target="_blank" rel="noreferrer" class="text-sky-600 underline underline-offset-2">Terms &amp; Conditions</NuxtLink>
                   and
                   <a href="https://sycamore.ng/privacy" target="_blank" rel="noreferrer" class="text-sky-600 underline underline-offset-2">Privacy Policy</a>.
                 </span>
@@ -228,6 +228,19 @@ const onUsernameDone = () => {
               </p>
             </form>
           </template>
+        </div>
+
+        <!-- Mobile attribution -->
+        <div class="md:hidden mt-8 text-center">
+          <a
+            href="https://sycamore.ng"
+            target="_blank"
+            rel="noreferrer"
+            class="inline-flex items-center gap-1.5 text-[11px] text-ink-400 hover:text-ink-600 transition"
+          >
+            <img src="/Group.png" alt="" class="w-3 h-3 opacity-50" />
+            <span>A product by <span class="font-medium">Sycamore</span></span>
+          </a>
         </div>
       </div>
     </div>

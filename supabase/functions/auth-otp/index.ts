@@ -218,14 +218,15 @@ Deno.serve(async (req: Request) => {
 
       if (user) {
         // Existing Sycamore user signing in -- identify in Pulse
-        pulseIdentify(user.id, {
+        const pulseId = user.core_user_id || email;
+        pulseIdentify(pulseId, {
           email: user.email,
           name: user.name,
           active_customer: !!user.active_customer_flag,
           has_account: !!user.account_number,
           first_encounter: "sycamore_core",
         }).catch(() => {});
-        pulseTrack(user.id, "signed_in_server", {
+        pulseTrack(pulseId, "signed_in_server", {
           method: "otp",
           is_guest: false,
           is_existing_sycamore_user: true,

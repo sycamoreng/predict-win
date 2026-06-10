@@ -205,5 +205,18 @@ const getImgUrl = (filename: string) => `/${filename}`
         </div>
       </div>
     </section>
+
+    <!-- Footer attribution -->
+    <div class="text-center py-4">
+      <a
+        href="https://sycamore.ng"
+        target="_blank"
+        rel="noreferrer"
+        class="inline-flex items-center gap-1.5 text-xs text-ink-400 hover:text-ink-600 transition"
+      >
+        <img src="/Group.png" alt="" class="w-3.5 h-3.5 opacity-50" />
+        <span>A product by <span class="font-medium">Sycamore</span></span>
+      </a>
+    </div>
   </div>
 </template>

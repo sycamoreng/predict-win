@@ -126,7 +126,7 @@ function nextIdx() {
     <div class="text-center py-6 border-t border-ink-100">
       <p class="text-sm text-ink-500">
         Still have questions? Reach us at
-        <a href="mailto:support@sycamore.ng" class="text-sky-600 font-semibold hover:underline">support@sycamore.ng</a>
+        <a href="mailto:complaints@sycamore.ng" class="text-sky-600 font-semibold hover:underline">complaints@sycamore.ng</a>
         or via the in-app chat.
       </p>
       <NuxtLink to="/terms" class="inline-block mt-2 text-sm font-semibold text-ink-600 hover:text-ink-800">

@@ -10,6 +10,7 @@ interface SessionUser {
   email: string
   name: string
   username?: string | null
+  core_user_id?: string | null
   social_handles?: SocialHandles | null
   account_number: string | null
   active_customer_flag: boolean
@@ -74,7 +75,8 @@ export const useAuth = () => {
     try {
       const { $pulse } = useNuxtApp() as any
       if (!$pulse) return
-      $pulse.identify(u.id, {
+      const externalId = u.core_user_id || u.email
+      $pulse.identify(externalId, {
         email: u.email,
         name: u.name,
         username: u.username || undefined,

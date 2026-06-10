@@ -24,6 +24,7 @@ function deriveFirstName(name: string | null | undefined, username: string | nul
 }
 
 interface InboundRecord {
+  user_id?: string;
   email?: string;
   name?: string;
   phone_number?: string;
@@ -49,6 +50,7 @@ interface NormalisedRecord {
   active_customer_flag: boolean;
   is_account_valid: boolean;
   qualifying_transactions_count: number;
+  core_user_id: string | null;
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -67,6 +69,7 @@ function validate(rec: InboundRecord): { ok: true; row: NormalisedRecord } | { o
   const txCount = Number.isFinite(rec.qualifying_transactions_count)
     ? Math.max(0, Math.floor(rec.qualifying_transactions_count as number))
     : 0;
+  const coreUserId = (rec.user_id || "").trim() || null;
 
   return {
     ok: true,
@@ -78,6 +81,7 @@ function validate(rec: InboundRecord): { ok: true; row: NormalisedRecord } | { o
       active_customer_flag: !!flag,
       is_account_valid: NUBAN_RE.test(account),
       qualifying_transactions_count: txCount,
+      core_user_id: coreUserId,
     },
   };
 }
@@ -109,9 +113,11 @@ function extractPulseTraits(rec: InboundRecord): Record<string, unknown> {
   return traits;
 }
 
-async function identifyAndTrackUser(rec: InboundRecord, existingUser: { id: string } | null) {
+async function identifyAndTrackUser(rec: InboundRecord, existingUser: { id: string; core_user_id?: string | null } | null) {
   const email = (rec.email || "").trim().toLowerCase();
-  const externalId = existingUser?.id || email;
+  // Prefer core_user_id from the inbound payload, then from existing DB record, then fall back to email
+  const coreUserId = (rec.user_id || "").trim() || existingUser?.core_user_id || null;
+  const externalId = coreUserId || email;
   const traits = extractPulseTraits(rec);
 
   await pulseIdentify(externalId, traits);
@@ -138,15 +144,16 @@ async function identifyAndTrackUser(rec: InboundRecord, existingUser: { id: stri
 }
 
 async function upsertOne(row: NormalisedRecord) {
+  const payload: Record<string, unknown> = {
+    ...row,
+    updated_at: new Date().toISOString(),
+  };
+  // Only write core_user_id if provided (don't overwrite existing with null)
+  if (!row.core_user_id) delete payload.core_user_id;
+
   const { error } = await supabase
     .from("synced_users")
-    .upsert(
-      {
-        ...row,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "email" },
-    );
+    .upsert(payload, { onConflict: "email" });
   if (error) throw new Error(error.message);
 }
 
@@ -179,7 +186,7 @@ Deno.serve(async (req: Request) => {
       // Check if user already exists (to determine if this is a new account)
       const { data: existing } = await supabase
         .from("synced_users")
-        .select("id")
+        .select("id, core_user_id")
         .eq("email", result.row.email)
         .maybeSingle();
 
@@ -218,14 +225,14 @@ Deno.serve(async (req: Request) => {
       }
 
       // Lookup existing users to determine new vs existing
-      const existingEmails = new Set<string>();
+      const existingMap = new Map<string, { core_user_id: string | null }>();
       if (accepted.length > 0) {
         const { data: existingRows } = await supabase
           .from("synced_users")
-          .select("email")
+          .select("email, core_user_id")
           .in("email", accepted.map((a) => a.email));
         for (const row of existingRows || []) {
-          existingEmails.add(row.email);
+          existingMap.set(row.email, { core_user_id: row.core_user_id });
         }
       }
 
@@ -233,7 +240,11 @@ Deno.serve(async (req: Request) => {
         const { error } = await supabase
           .from("synced_users")
           .upsert(
-            accepted.map((row) => ({ ...row, updated_at: new Date().toISOString() })),
+            accepted.map((row) => {
+              const payload: Record<string, unknown> = { ...row, updated_at: new Date().toISOString() };
+              if (!row.core_user_id) delete payload.core_user_id;
+              return payload;
+            }),
             { onConflict: "email" },
           );
         if (error) throw new Error(error.message);
@@ -243,8 +254,9 @@ Deno.serve(async (req: Request) => {
       for (const rec of records) {
         const email = (rec.email || "").trim().toLowerCase();
         if (!email) continue;
-        const isExisting = existingEmails.has(email);
-        identifyAndTrackUser(rec, isExisting ? { id: email } : null).catch(() => {});
+        const existing = existingMap.get(email);
+        const isExisting = !!existing;
+        identifyAndTrackUser(rec, isExisting ? { id: email, core_user_id: existing?.core_user_id } : null).catch(() => {});
       }
 
       return new Response(
@@ -274,7 +286,7 @@ Deno.serve(async (req: Request) => {
       }
       const { data: existing } = await supabase
         .from("synced_users")
-        .select("id, active_customer_flag")
+        .select("id, active_customer_flag, core_user_id")
         .eq("email", email)
         .maybeSingle();
       if (!existing) {
@@ -288,6 +300,9 @@ Deno.serve(async (req: Request) => {
         updated_at: new Date().toISOString(),
       };
       if (txCount !== null) update.qualifying_transactions_count = txCount;
+      // Store core_user_id if provided and not yet set
+      const inboundCoreId = (body.user_id || "").trim();
+      if (inboundCoreId && !existing.core_user_id) update.core_user_id = inboundCoreId;
       const { error } = await supabase
         .from("synced_users")
         .update(update)
@@ -295,10 +310,11 @@ Deno.serve(async (req: Request) => {
       if (error) throw new Error(error.message);
 
       // Track activation in Pulse
+      const pulseExternalId = existing.core_user_id || email;
       const wasInactive = !existing.active_customer_flag;
       if (flag && wasInactive) {
-        pulseIdentify(existing.id, { active_customer: true, qualifying_transactions_count: txCount }).catch(() => {});
-        pulseTrack(existing.id, "customer_activated", {
+        pulseIdentify(pulseExternalId, { active_customer: true, qualifying_transactions_count: txCount }).catch(() => {});
+        pulseTrack(pulseExternalId, "customer_activated", {
           email,
           qualifying_transactions_count: txCount,
         }).catch(() => {});
@@ -313,10 +329,10 @@ Deno.serve(async (req: Request) => {
         if (body.first_transaction_amount) traits.first_transaction_amount = body.first_transaction_amount;
         if (body.first_transaction_product) traits.first_transaction_product = body.first_transaction_product;
         if (body.first_transaction_date) traits.first_transaction_date = body.first_transaction_date;
-        pulseIdentify(existing.id, traits).catch(() => {});
+        pulseIdentify(pulseExternalId, traits).catch(() => {});
 
         if (body.first_transaction_amount && body.first_transaction_product) {
-          pulseTrack(existing.id, "first_transaction_completed", {
+          pulseTrack(pulseExternalId, "first_transaction_completed", {
             amount: body.first_transaction_amount,
             product: body.first_transaction_product,
             date: body.first_transaction_date || null,
@@ -382,18 +398,21 @@ Deno.serve(async (req: Request) => {
           let userEmail: string | null = null;
           let userName: string | null = null;
           let userUsername: string | null = null;
+          let userCoreId: string | null = null;
           if (sweepRow?.user_id) {
             const { data: usr } = await supabase
               .from("synced_users")
-              .select("email, name, username")
+              .select("email, name, username, core_user_id")
               .eq("id", sweepRow.user_id)
               .maybeSingle();
             userEmail = usr?.email || null;
             userName = usr?.name || null;
             userUsername = usr?.username || null;
+            userCoreId = usr?.core_user_id || null;
 
-            // Track sweep result in Pulse
-            pulseTrack(sweepRow.user_id, "sweep_result_received", {
+            // Track sweep result in Pulse (prefer core_user_id, fallback to email)
+            const pulseId = userCoreId || userEmail || sweepRow.user_id;
+            pulseTrack(pulseId, "sweep_result_received", {
               status: userStatus,
               team_name: winning_team_name || null,
               amount: u.amount || null,
