@@ -38,10 +38,13 @@ jobs:
 
       - name: Build Docker image
         run: |
+          echo "${{ secrets.GH_PACKAGES_TOKEN }}" > /tmp/gh_token
           docker build \
+            --secret id=gh_token,src=/tmp/gh_token \
             --build-arg VITE_SUPABASE_URL="${{ secrets.SUPABASE_URL }}" \
             --build-arg VITE_SUPABASE_ANON_KEY="${{ secrets.SUPABASE_ANON_KEY }}" \
             -t $IMAGE:${{ steps.tag.outputs.tag }} .
+          rm -f /tmp/gh_token
 
       - name: Download Trivy HTML template
         run: |

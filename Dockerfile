@@ -11,7 +11,14 @@ ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
 ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
 
 COPY package*.json ./
-RUN npm ci
+
+# Mount GH Packages token as a build-time secret. Token is only
+# available during this RUN and is NOT persisted in any image layer.
+RUN --mount=type=secret,id=gh_token,required=true \
+    printf "@sycamoreng:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n" \
+      "$(cat /run/secrets/gh_token)" > .npmrc && \
+    npm ci && \
+    rm -f .npmrc
 
 COPY . .
 RUN npm run build
