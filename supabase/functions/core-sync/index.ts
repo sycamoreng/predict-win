@@ -24,22 +24,48 @@ function deriveFirstName(name: string | null | undefined, username: string | nul
 }
 
 interface InboundRecord {
+  // Fields we persist locally
+  customer_id?: string;
   user_id?: string;
   email?: string;
   name?: string;
+  first_name?: string;
+  last_name?: string;
   phone_number?: string;
   account_number?: string;
   active_customer_flag?: boolean;
-  qualifying_transactions_count?: number;
-  // Extended traits from Core (passed to Pulse, not stored locally)
+  // Extended traits from Core (forwarded to Pulse, not stored locally)
   gender?: string;
   state?: string;
   country?: string;
-  date_of_birth?: string;
-  first_transaction_amount?: number;
-  first_transaction_product?: string;
-  first_transaction_date?: string;
-  referral_source?: string;
+  tier?: string;
+  tag?: string;
+  registration_type?: string;
+  signup_platform?: string;
+  user_status?: string;
+  email_verified?: boolean;
+  phone_verified?: boolean;
+  signup_date?: string;
+  has_tag?: boolean;
+  has_wallet?: boolean;
+  total_loans_count?: number;
+  qualifying_loans_count?: number;
+  is_borrower?: boolean;
+  all_loans_rejected?: boolean;
+  last_loan_at?: string;
+  total_investments_count?: number;
+  qualifying_investments_count?: number;
+  is_investor?: boolean;
+  last_investment_at?: string;
+  successful_target_contribution_transactions_count?: number;
+  is_contributor?: boolean;
+  last_target_contribution_transaction_at?: string;
+  total_transactions_count?: number;
+  successful_transactions_count?: number;
+  first_successful_transaction_at?: string;
+  last_successful_transaction_at?: string;
+  active_user_no_loan_investment?: boolean;
+  qualifying_transactions_count?: number;
 }
 
 interface NormalisedRecord {
@@ -58,7 +84,8 @@ const NUBAN_RE = /^\d{10}$/;
 
 function validate(rec: InboundRecord): { ok: true; row: NormalisedRecord } | { ok: false; reason: string } {
   const email = (rec.email || "").trim().toLowerCase();
-  const name = (rec.name || "").trim();
+  const rawName = (rec.name || "").trim();
+  const name = rawName || [rec.first_name, rec.last_name].filter(Boolean).join(" ").trim();
   const phone = (rec.phone_number || "").trim();
   const account = (rec.account_number || "").trim();
 
@@ -96,49 +123,64 @@ function authorise(req: Request): boolean {
 function extractPulseTraits(rec: InboundRecord): Record<string, unknown> {
   const traits: Record<string, unknown> = {};
   if (rec.name) traits.name = rec.name.trim();
+  if (rec.first_name) traits.first_name = rec.first_name;
+  if (rec.last_name) traits.last_name = rec.last_name;
   if (rec.email) traits.email = rec.email.trim().toLowerCase();
   if (rec.phone_number) traits.phone = rec.phone_number.trim();
   if (rec.account_number) traits.account_number = rec.account_number.trim();
+  if (rec.customer_id) traits.customer_id = rec.customer_id;
   if (rec.gender) traits.gender = rec.gender;
   if (rec.state) traits.state = rec.state;
   if (rec.country) traits.country = rec.country;
-  if (rec.date_of_birth) traits.date_of_birth = rec.date_of_birth;
+  if (rec.tier) traits.tier = rec.tier;
+  if (rec.tag) traits.tag = rec.tag;
+  if (rec.registration_type) traits.registration_type = rec.registration_type;
+  if (rec.signup_platform) traits.signup_platform = rec.signup_platform;
+  if (rec.user_status) traits.user_status = rec.user_status;
+  if (rec.email_verified !== undefined) traits.email_verified = rec.email_verified;
+  if (rec.phone_verified !== undefined) traits.phone_verified = rec.phone_verified;
+  if (rec.signup_date) traits.signup_date = rec.signup_date;
+  if (rec.has_tag !== undefined) traits.has_tag = rec.has_tag;
+  if (rec.has_wallet !== undefined) traits.has_wallet = rec.has_wallet;
+  if (rec.total_loans_count !== undefined) traits.total_loans_count = rec.total_loans_count;
+  if (rec.qualifying_loans_count !== undefined) traits.qualifying_loans_count = rec.qualifying_loans_count;
+  if (rec.is_borrower !== undefined) traits.is_borrower = rec.is_borrower;
+  if (rec.all_loans_rejected !== undefined) traits.all_loans_rejected = rec.all_loans_rejected;
+  if (rec.last_loan_at) traits.last_loan_at = rec.last_loan_at;
+  if (rec.total_investments_count !== undefined) traits.total_investments_count = rec.total_investments_count;
+  if (rec.qualifying_investments_count !== undefined) traits.qualifying_investments_count = rec.qualifying_investments_count;
+  if (rec.is_investor !== undefined) traits.is_investor = rec.is_investor;
+  if (rec.last_investment_at) traits.last_investment_at = rec.last_investment_at;
+  if (rec.successful_target_contribution_transactions_count !== undefined) traits.successful_target_contribution_transactions_count = rec.successful_target_contribution_transactions_count;
+  if (rec.is_contributor !== undefined) traits.is_contributor = rec.is_contributor;
+  if (rec.last_target_contribution_transaction_at) traits.last_target_contribution_transaction_at = rec.last_target_contribution_transaction_at;
+  if (rec.total_transactions_count !== undefined) traits.total_transactions_count = rec.total_transactions_count;
+  if (rec.successful_transactions_count !== undefined) traits.successful_transactions_count = rec.successful_transactions_count;
+  if (rec.first_successful_transaction_at) traits.first_successful_transaction_at = rec.first_successful_transaction_at;
+  if (rec.last_successful_transaction_at) traits.last_successful_transaction_at = rec.last_successful_transaction_at;
+  if (rec.active_user_no_loan_investment !== undefined) traits.active_user_no_loan_investment = rec.active_user_no_loan_investment;
   if (rec.active_customer_flag !== undefined) traits.active_customer = !!rec.active_customer_flag;
   if (rec.qualifying_transactions_count !== undefined) traits.qualifying_transactions_count = rec.qualifying_transactions_count;
-  if (rec.first_transaction_amount !== undefined) traits.first_transaction_amount = rec.first_transaction_amount;
-  if (rec.first_transaction_product) traits.first_transaction_product = rec.first_transaction_product;
-  if (rec.first_transaction_date) traits.first_transaction_date = rec.first_transaction_date;
-  if (rec.referral_source) traits.referral_source = rec.referral_source;
   traits.first_encounter = "sycamore_core";
   return traits;
 }
 
 async function identifyAndTrackUser(rec: InboundRecord, existingUser: { id: string; core_user_id?: string | null } | null) {
   const email = (rec.email || "").trim().toLowerCase();
-  // Prefer core_user_id from the inbound payload, then from existing DB record, then fall back to email
   const coreUserId = (rec.user_id || "").trim() || existingUser?.core_user_id || null;
   const externalId = coreUserId || email;
   const traits = extractPulseTraits(rec);
 
   await pulseIdentify(externalId, traits);
 
-  // Track account creation event (new user being synced from Core)
   if (!existingUser) {
     await pulseTrack(externalId, "sycamore_account_created", {
       email,
       country: rec.country || null,
       state: rec.state || null,
       gender: rec.gender || null,
+      signup_platform: rec.signup_platform || null,
       source: "core_sync",
-    });
-  }
-
-  // Track first transaction if data is present
-  if (rec.first_transaction_amount && rec.first_transaction_product) {
-    await pulseTrack(externalId, "first_transaction_completed", {
-      amount: rec.first_transaction_amount,
-      product: rec.first_transaction_product,
-      date: rec.first_transaction_date || null,
     });
   }
 }
@@ -320,24 +362,15 @@ Deno.serve(async (req: Request) => {
         }).catch(() => {});
       }
 
-      // Forward extended traits to Pulse if provided (first txn data, demographics)
-      if (body.gender || body.state || body.country || body.first_transaction_amount) {
+      // Forward extended traits to Pulse if provided
+      if (body.gender || body.state || body.country || body.tier || body.signup_platform) {
         const traits: Record<string, unknown> = {};
         if (body.gender) traits.gender = body.gender;
         if (body.state) traits.state = body.state;
         if (body.country) traits.country = body.country;
-        if (body.first_transaction_amount) traits.first_transaction_amount = body.first_transaction_amount;
-        if (body.first_transaction_product) traits.first_transaction_product = body.first_transaction_product;
-        if (body.first_transaction_date) traits.first_transaction_date = body.first_transaction_date;
+        if (body.tier) traits.tier = body.tier;
+        if (body.signup_platform) traits.signup_platform = body.signup_platform;
         pulseIdentify(pulseExternalId, traits).catch(() => {});
-
-        if (body.first_transaction_amount && body.first_transaction_product) {
-          pulseTrack(pulseExternalId, "first_transaction_completed", {
-            amount: body.first_transaction_amount,
-            product: body.first_transaction_product,
-            date: body.first_transaction_date || null,
-          }).catch(() => {});
-        }
       }
 
       return new Response(
@@ -426,6 +459,7 @@ Deno.serve(async (req: Request) => {
               : "team_win_sweep_skipped";
 
             const firstName = deriveFirstName(userName, userUsername, userEmail);
+            const lastFourDigits = (u.account_number || "").slice(-4) || null;
             emailQueue.push({
               event_name: eventName,
               to_email: userEmail,
@@ -433,10 +467,12 @@ Deno.serve(async (req: Request) => {
                 firstName,
                 amount: u.amount,
                 teamName: winning_team_name || "",
+                lastFourDigits,
                 savingsLink: `${APP_BASE_URL}/settings`,
               } : {
                 firstName,
                 amount: u.amount,
+                lastFourDigits,
                 fundLink: `${APP_BASE_URL}/settings`,
               },
             });

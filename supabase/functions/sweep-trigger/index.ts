@@ -209,6 +209,7 @@ Deno.serve(async (req: Request) => {
         }, {
           firstName: deriveFirstName(u.name, u.username, u.email),
           amount: u.auto_savings_amount,
+          lastFourDigits: (u.account_number || "").slice(-4) || null,
           fundLink: `${APP_BASE_URL}/settings`,
         });
       }
@@ -242,14 +243,17 @@ Deno.serve(async (req: Request) => {
               const eventName = ru.status === "completed"
                 ? "team_win_sweep_completed"
                 : "team_win_sweep_skipped";
+              const lastFourDigits = (localUser.account_number || "").slice(-4) || null;
               const tplData = ru.status === "completed" ? {
                 firstName: deriveFirstName(localUser.name, localUser.username, localUser.email),
                 amount: localUser.auto_savings_amount,
                 teamName: team.name,
+                lastFourDigits,
                 savingsLink: `${APP_BASE_URL}/settings`,
               } : {
                 firstName: deriveFirstName(localUser.name, localUser.username, localUser.email),
                 amount: localUser.auto_savings_amount,
+                lastFourDigits,
                 fundLink: `${APP_BASE_URL}/settings`,
               };
               await logEvent(localUser.id, eventName, {
