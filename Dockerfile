@@ -2,7 +2,6 @@
 
 # ---------- Build stage ----------
 FROM node:22-alpine AS builder
-RUN apk upgrade libcrypto3 libssl3
 
 WORKDIR /app
 
@@ -28,6 +27,7 @@ RUN npm run build
 
 # ---------- Runtime stage ----------
 FROM node:22-alpine AS runner
+RUN apk upgrade libcrypto3 libssl3
 
 WORKDIR /app
 
