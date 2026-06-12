@@ -62,7 +62,10 @@ Deno.serve(async (req: Request) => {
     }
 
     const updatePayload: Record<string, unknown> = {};
-    if (username !== undefined) updatePayload.username = username.trim().toLowerCase();
+    if (username !== undefined) {
+      updatePayload.username = username.trim().toLowerCase();
+      updatePayload.username_set_by_user = true;
+    }
     if (social_handles !== undefined) updatePayload.social_handles = social_handles;
 
     if (Object.keys(updatePayload).length === 0) {

@@ -141,6 +141,7 @@ const deriveWinnerFromScore = () => {
 }
 
 const reconcileFirstScorer = () => {
+  if (!wantsExactScore.value) return
   if (firstToScore.value === props.match.home_team_id && homeScore.value === 0) {
     firstToScore.value = null
   } else if (firstToScore.value === props.match.away_team_id && awayScore.value === 0) {

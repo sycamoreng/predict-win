@@ -456,11 +456,15 @@ Deno.serve(async (req: Request) => {
         : null;
 
       const firstToScoreVal = wantsFirstToScore
-        ? (first_to_score_team_id === match.home_team_id && homeScoreNum > 0
-          ? match.home_team_id
-          : first_to_score_team_id === match.away_team_id && awayScoreNum > 0
-            ? match.away_team_id
-            : null)
+        ? (wantsExactScore
+          ? (first_to_score_team_id === match.home_team_id && homeScoreNum > 0
+            ? match.home_team_id
+            : first_to_score_team_id === match.away_team_id && awayScoreNum > 0
+              ? match.away_team_id
+              : null)
+          : (first_to_score_team_id === match.home_team_id || first_to_score_team_id === match.away_team_id
+            ? first_to_score_team_id
+            : null))
         : null;
 
       const payload = {
