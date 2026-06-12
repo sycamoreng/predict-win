@@ -505,32 +505,31 @@ Deno.serve(async (req: Request) => {
 
       const homeTeamName = (match.home_team as any).code;
       const awayTeamName = (match.away_team as any).code;
-      await logEvent(user.id, "prediction_submitted", {
-        email: user.email,
-        name: user.name,
-        match_id,
-        match: `${homeTeamName}-${awayTeamName}`,
-        team_a: homeTeamName,
-        team_b: awayTeamName,
-        predicted_home: homeScoreNum,
-        predicted_away: awayScoreNum,
-        match_result: `${homeScoreNum}-${awayScoreNum}`,
-        first_goalscorer: firstToScoreVal === match.home_team_id ? homeTeamName : firstToScoreVal === match.away_team_id ? awayTeamName : "None",
-        exact_scoreline: wantsExactScore ? `${homeScoreNum}-${awayScoreNum}` : "N/A",
-        predicted_winner_team_id: derivedWinner,
-        predicted_first_to_score_team_id: firstToScoreVal,
-        wants_winner_pick: wantsWinner,
-        wants_first_to_score_pick: wantsFirstToScore,
-        wants_exact_score_pick: wantsExactScore,
-        backed_team_id: user.backed_team_id || null,
-      }, {
-        firstName: deriveFirstName(user.name, user.username, user.email),
-        teamA: homeTeamName,
-        teamB: awayTeamName,
-        matchResult: `${homeScoreNum}-${awayScoreNum}`,
-        firstGoalscorer: firstToScoreVal === match.home_team_id ? homeTeamName : firstToScoreVal === match.away_team_id ? awayTeamName : "None",
-        exactScoreline: wantsExactScore ? `${homeScoreNum}-${awayScoreNum}` : "N/A",
-        historyLink: `${APP_BASE_URL}/history`,
+
+      // Log analytics event only (no email on each prediction — emails sent by cron at lock time)
+      await supabase.from("analytics_events").insert({
+        user_id: user.id,
+        event_name: "prediction_submitted",
+        properties: {
+          email: user.email,
+          name: user.name,
+          match_id,
+          match: `${homeTeamName}-${awayTeamName}`,
+          team_a: homeTeamName,
+          team_b: awayTeamName,
+          predicted_home: homeScoreNum,
+          predicted_away: awayScoreNum,
+          match_result: `${homeScoreNum}-${awayScoreNum}`,
+          first_goalscorer: firstToScoreVal === match.home_team_id ? homeTeamName : firstToScoreVal === match.away_team_id ? awayTeamName : "None",
+          exact_scoreline: wantsExactScore ? `${homeScoreNum}-${awayScoreNum}` : "N/A",
+          predicted_winner_team_id: derivedWinner,
+          predicted_first_to_score_team_id: firstToScoreVal,
+          wants_winner_pick: wantsWinner,
+          wants_first_to_score_pick: wantsFirstToScore,
+          wants_exact_score_pick: wantsExactScore,
+          backed_team_id: user.backed_team_id || null,
+        },
+        delivered_to_netcore: false,
       });
 
       return new Response(JSON.stringify({ success: true, prediction: payload }), {
@@ -587,7 +586,7 @@ Deno.serve(async (req: Request) => {
 
     if (route === "auto-savings") {
       const { enabled, amount, duration } = body;
-      const validAmounts = [2000, 5000, 10000];
+      const validAmounts = [1000, 2000, 3000, 5000, 10000, 15000, 20000, 50000, 100000];
       const validDurations = [30, 60, 90];
 
       if (enabled) {

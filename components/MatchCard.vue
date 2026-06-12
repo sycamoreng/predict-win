@@ -63,6 +63,7 @@ const saving = ref(false)
 const error = ref('')
 const justSaved = ref(false)
 const showShare = ref(false)
+const toastMessage = ref('')
 
 const shareText = computed(() => {
   const home = props.match.home_team.name
@@ -241,7 +242,17 @@ const save = async () => {
       wants_first_to_score: wantsFirstToScore.value,
       wants_exact_score: wantsExactScore.value,
     })
-    setTimeout(() => (justSaved.value = false), 1800)
+
+    const diff = lockTime.value - Date.now()
+    if (diff > 0) {
+      const hours = Math.floor(diff / 3_600_000)
+      const minutes = Math.floor((diff % 3_600_000) / 60_000)
+      const timeStr = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`
+      toastMessage.value = `Prediction locked in! You have ${timeStr} to make changes before it's final.`
+    } else {
+      toastMessage.value = 'Prediction saved!'
+    }
+    setTimeout(() => { toastMessage.value = ''; justSaved.value = false }, 5000)
     emit('saved', {
       match_id: props.match.id,
       predicted_winner_team_id: winnerVal,
@@ -488,5 +499,26 @@ const save = async () => {
       title="My World Cup Prediction"
       @close="showShare = false"
     />
+
+    <Teleport to="body">
+      <Transition
+        enter-active-class="transition duration-300 ease-out"
+        enter-from-class="opacity-0 translate-y-4"
+        enter-to-class="opacity-100 translate-y-0"
+        leave-active-class="transition duration-200 ease-in"
+        leave-from-class="opacity-100 translate-y-0"
+        leave-to-class="opacity-0 translate-y-4"
+      >
+        <div
+          v-if="toastMessage"
+          class="fixed bottom-6 left-4 right-4 sm:left-auto sm:right-6 sm:max-w-sm z-50 bg-ink-900 text-white rounded-xl px-5 py-4 shadow-xl flex items-start gap-3"
+        >
+          <svg class="w-5 h-5 text-mint-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+          </svg>
+          <p class="text-sm font-medium leading-snug">{{ toastMessage }}</p>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>

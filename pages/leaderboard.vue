@@ -11,6 +11,7 @@ const mode = ref<LeaderboardMode>('week')
 const players = ref<any[]>([])
 const weeklyPlayers = ref<any[]>([])
 const staffPlayers = ref<any[]>([])
+const staffPlayersOverall = ref<any[]>([])
 const loading = ref(true)
 const activeTab = ref<'public' | 'staff'>('public')
 
@@ -70,6 +71,21 @@ const loadWeekly = async () => {
 const loadStaff = async () => {
   if (!isStaff.value) return
   const { data } = await supabase
+    .from('weekly_leaderboard')
+    .select('*')
+    .eq('is_staff', true)
+    .order('rank', { ascending: true })
+    .limit(50)
+  staffPlayers.value = (data || []).map((p: any) => ({
+    ...p,
+    id: p.user_id,
+    total_points: p.week_points,
+  }))
+}
+
+const loadStaffOverall = async () => {
+  if (!isStaff.value) return
+  const { data } = await supabase
     .from('synced_users')
     .select('id, name, username, email, total_points, is_staff, exact_scorelines_count, correct_predictions_count, backed_team:teams!synced_users_backed_team_id_fkey(flag_emoji, code)')
     .eq('is_staff', true)
@@ -78,7 +94,7 @@ const loadStaff = async () => {
     .order('correct_predictions_count', { ascending: false })
     .order('name', { ascending: true })
     .limit(50)
-  staffPlayers.value = data || []
+  staffPlayersOverall.value = data || []
 }
 
 const load = async () => {
@@ -88,12 +104,14 @@ const load = async () => {
     return
   }
   loading.value = true
-  await Promise.all([loadWeekBounds(), loadOverall(), loadWeekly(), loadStaff()])
+  await Promise.all([loadWeekBounds(), loadOverall(), loadWeekly(), loadStaff(), loadStaffOverall()])
   loading.value = false
 }
 
 const currentPlayers = computed(() => {
-  if (activeTab.value === 'staff') return staffPlayers.value
+  if (activeTab.value === 'staff') {
+    return mode.value === 'week' ? staffPlayers.value : staffPlayersOverall.value
+  }
   return mode.value === 'week' ? weeklyPlayers.value : players.value
 })
 
@@ -107,7 +125,8 @@ const myRank = computed(() => {
 const myWeekPoints = computed(() => {
   if (!user.value) return 0
   const entry = weeklyPlayers.value.find((p) => p.id === user.value!.id)
-  return entry?.week_points || 0
+    || staffPlayers.value.find((p) => p.id === user.value!.id)
+  return entry?.week_points || entry?.total_points || 0
 })
 
 const podiumColors = [

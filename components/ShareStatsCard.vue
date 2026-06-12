@@ -22,7 +22,7 @@ const shareText = computed(() => {
   lines.push(`My Sycamore Predictor League Stats:`)
   lines.push('')
   lines.push(`${props.totalPoints} points`)
-  lines.push(`${props.correctPredictions}/${props.predictionsCount} correct (${accuracy.value}% accuracy)`)
+  lines.push(`${props.correctPredictions}/${props.predictionsCount} predictions scored (${accuracy.value}% accuracy)`)
   lines.push(`${props.exactScorelines} exact scoreline${props.exactScorelines === 1 ? '' : 's'}`)
   if (props.backedTeam) {
     lines.push(`Backing ${props.backedTeam.flag_emoji} ${props.backedTeam.name}`)

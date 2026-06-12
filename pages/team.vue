@@ -2,7 +2,7 @@
 definePageMeta({ middleware: 'auth' })
 
 const supabase = useSupabase()
-const { user, isGuest, hasAccount, refreshUser, trackPulseEvent } = useAuth()
+const { user, isGuest, hasAccount, needsUsername, refreshUser, trackPulseEvent } = useAuth()
 const { config: campaign, load: loadCampaign } = useCampaign()
 const { call } = useFunctions()
 
@@ -12,10 +12,11 @@ const loading = ref(true)
 const pickError = ref('')
 const confirmTeam = ref<any | null>(null)
 const showGuestModal = ref(false)
+const showUsernamePrompt = ref(false)
 
 const showSavingsModal = ref(false)
 const showSavingsTerms = ref(false)
-const savingsAmount = ref(2000)
+const savingsAmount = ref(1000)
 const savingsDuration = ref(30)
 const savingsConsent = ref(false)
 const savingsTermsAccepted = ref(false)
@@ -34,8 +35,14 @@ onMounted(() => {
   load()
   if (isGuest.value) {
     showGuestModal.value = true
+  } else if (needsUsername.value) {
+    showUsernamePrompt.value = true
   }
 })
+
+const onUsernameDone = () => {
+  showUsernamePrompt.value = false
+}
 
 const hasTeam = computed(() => !!user.value?.backed_team_id)
 const teamIsEliminated = computed(() => {
@@ -447,9 +454,15 @@ const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
             <div>
               <label class="label">Amount per win</label>
               <select v-model.number="savingsAmount" class="input">
+                <option :value="1000">₦1,000</option>
                 <option :value="2000">₦2,000</option>
+                <option :value="3000">₦3,000</option>
                 <option :value="5000">₦5,000</option>
                 <option :value="10000">₦10,000</option>
+                <option :value="15000">₦15,000</option>
+                <option :value="20000">₦20,000</option>
+                <option :value="50000">₦50,000</option>
+                <option :value="100000">₦100,000</option>
               </select>
             </div>
             <div>
@@ -553,5 +566,7 @@ const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
         </div>
       </div>
     </Teleport>
+
+    <UsernamePrompt :show="showUsernamePrompt" @done="onUsernameDone" />
   </div>
 </template>

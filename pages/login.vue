@@ -7,7 +7,6 @@ const error = ref('')
 const devCode = ref('')
 const agreedToTerms = ref(false)
 const showNewUserToast = ref(false)
-const showUsernamePrompt = ref(false)
 
 const { setSession, user, trackPulseEvent } = useAuth()
 const { call } = useFunctions()
@@ -55,21 +54,12 @@ const verifyOtp = async () => {
     const res = await call('auth-otp/verify', { email: email.value, code: code.value })
     setSession(res.user)
     trackPulseEvent('signed_in', { method: 'otp', is_guest: !!res.user.is_guest })
-    if (!res.user.is_guest && !res.user.username) {
-      showUsernamePrompt.value = true
-    } else {
-      await router.replace('/team')
-    }
+    await router.replace('/team')
   } catch (e) {
     error.value = (e as Error).message
   } finally {
     loading.value = false
   }
-}
-
-const onUsernameDone = () => {
-  showUsernamePrompt.value = false
-  router.replace('/team')
 }
 </script>
 
@@ -158,7 +148,7 @@ const onUsernameDone = () => {
                 />
                 <span class="text-xs text-ink-500 leading-relaxed group-hover:text-ink-700 transition">
                   I agree to the
-                  <NuxtLink to="/terms" target="_blank" rel="noreferrer" class="text-sky-600 underline underline-offset-2">Terms &amp; Conditions</NuxtLink>
+                  <a href="https://sycamore.ng/terms" target="_blank" rel="noreferrer" class="text-sky-600 underline underline-offset-2">Terms &amp; Conditions</a>
                   and
                   <a href="https://sycamore.ng/privacy" target="_blank" rel="noreferrer" class="text-sky-600 underline underline-offset-2">Privacy Policy</a>.
                 </span>
@@ -272,6 +262,4 @@ const onUsernameDone = () => {
       </div>
     </Transition>
   </Teleport>
-
-  <UsernamePrompt :show="showUsernamePrompt" @done="onUsernameDone" />
 </template>

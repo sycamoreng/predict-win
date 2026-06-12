@@ -617,7 +617,14 @@ const reportData = ref<{
   guestUsers: number
   activeCustomers: number
   usersWithTeam: number
+  savingsEnabled: number
   totalPredictions: number
+  matchesCompleted: number
+  matchesScheduled: number
+  correctPredictions: number
+  incorrectPredictions: number
+  exactScorelines: number
+  teamDistribution: Array<{ code: string; name: string; flag_emoji: string; count: number }>
   dailySignups: Array<{ date: string; count: number }>
   dailyPredictions: Array<{ date: string; count: number }>
 } | null>(null)
@@ -649,31 +656,65 @@ const loadReports = async () => {
       .select('*', { count: 'exact', head: true })
       .not('backed_team_id', 'is', null)
 
+    const { count: savingsEnabled } = await supabase
+      .from('synced_users')
+      .select('*', { count: 'exact', head: true })
+      .eq('auto_savings_enabled', true)
+
     const { count: totalPredictions } = await supabase
       .from('predictions')
       .select('*', { count: 'exact', head: true })
 
-    const { data: signupRows } = await supabase
-      .from('synced_users')
-      .select('created_at')
-      .order('created_at', { ascending: true })
+    const { count: matchesCompleted } = await supabase
+      .from('matches')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'completed')
 
-    const dailySignups: Record<string, number> = {}
-    for (const r of signupRows || []) {
-      const d = (r.created_at || '').slice(0, 10)
-      if (d) dailySignups[d] = (dailySignups[d] || 0) + 1
-    }
+    const { count: matchesScheduled } = await supabase
+      .from('matches')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'scheduled')
 
-    const { data: predRows } = await supabase
+    const { count: correctPredictions } = await supabase
       .from('predictions')
-      .select('created_at')
-      .order('created_at', { ascending: true })
+      .select('*', { count: 'exact', head: true })
+      .eq('scored', true)
+      .gt('points_awarded', 0)
 
-    const dailyPredictions: Record<string, number> = {}
-    for (const r of predRows || []) {
-      const d = (r.created_at || '').slice(0, 10)
-      if (d) dailyPredictions[d] = (dailyPredictions[d] || 0) + 1
+    const { count: incorrectPredictions } = await supabase
+      .from('predictions')
+      .select('*', { count: 'exact', head: true })
+      .eq('scored', true)
+      .eq('points_awarded', 0)
+
+    const { count: exactScorelines } = await supabase
+      .from('predictions')
+      .select('*', { count: 'exact', head: true })
+      .eq('scored', true)
+      .gte('points_awarded', 15)
+
+    const { data: teamData } = await supabase
+      .from('synced_users')
+      .select('backed_team_id, backed_team:teams!synced_users_backed_team_id_fkey(code, name, flag_emoji)')
+      .not('backed_team_id', 'is', null)
+
+    const teamCounts: Record<string, { code: string; name: string; flag_emoji: string; count: number }> = {}
+    for (const row of teamData || []) {
+      const t = row.backed_team as any
+      if (!t) continue
+      const key = row.backed_team_id
+      if (!teamCounts[key]) {
+        teamCounts[key] = { code: t.code, name: t.name, flag_emoji: t.flag_emoji || '', count: 0 }
+      }
+      teamCounts[key].count++
     }
+    const teamDistribution = Object.values(teamCounts).sort((a, b) => b.count - a.count)
+
+    const { data: signupRows } = await supabase.rpc('get_daily_signups')
+    const dailySignups = (signupRows || []).map((r: any) => ({ date: r.date, count: Number(r.count) }))
+
+    const { data: predRows } = await supabase.rpc('get_daily_predictions')
+    const dailyPredictions = (predRows || []).map((r: any) => ({ date: r.date, count: Number(r.count) }))
 
     reportData.value = {
       totalUsers: totalUsers || 0,
@@ -681,9 +722,16 @@ const loadReports = async () => {
       guestUsers: guestUsers || 0,
       activeCustomers: activeCustomers || 0,
       usersWithTeam: usersWithTeam || 0,
+      savingsEnabled: savingsEnabled || 0,
       totalPredictions: totalPredictions || 0,
-      dailySignups: Object.entries(dailySignups).map(([date, count]) => ({ date, count })),
-      dailyPredictions: Object.entries(dailyPredictions).map(([date, count]) => ({ date, count })),
+      matchesCompleted: matchesCompleted || 0,
+      matchesScheduled: matchesScheduled || 0,
+      correctPredictions: correctPredictions || 0,
+      incorrectPredictions: incorrectPredictions || 0,
+      exactScorelines: exactScorelines || 0,
+      teamDistribution,
+      dailySignups,
+      dailyPredictions,
     }
   } catch (e) {
     error.value = (e as Error).message
@@ -1330,6 +1378,84 @@ watch(activeTab, (tab) => {
             </div>
           </div>
 
+          <!-- Additional stats -->
+          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div class="card p-4 text-center">
+              <div class="text-2xl font-extrabold text-teal-600">{{ reportData.savingsEnabled }}</div>
+              <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Auto-savings on</div>
+            </div>
+            <div class="card p-4 text-center">
+              <div class="text-2xl font-extrabold text-mint-700">{{ reportData.matchesCompleted }}</div>
+              <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Matches played</div>
+            </div>
+            <div class="card p-4 text-center">
+              <div class="text-2xl font-extrabold text-ink-500">{{ reportData.matchesScheduled }}</div>
+              <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Matches left</div>
+            </div>
+            <div class="card p-4 text-center">
+              <div class="text-2xl font-extrabold text-mint-600">{{ reportData.correctPredictions }}</div>
+              <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Correct picks</div>
+            </div>
+            <div class="card p-4 text-center">
+              <div class="text-2xl font-extrabold text-coral-500">{{ reportData.incorrectPredictions }}</div>
+              <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Missed picks</div>
+            </div>
+            <div class="card p-4 text-center">
+              <div class="text-2xl font-extrabold text-sun-600">{{ reportData.exactScorelines }}</div>
+              <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Exact scorelines</div>
+            </div>
+          </div>
+
+          <!-- Win/Loss ratio -->
+          <div v-if="reportData.correctPredictions + reportData.incorrectPredictions > 0" class="card p-5 space-y-3">
+            <h3 class="font-bold text-ink-900">Prediction accuracy (all users)</h3>
+            <div class="flex items-center gap-3">
+              <div class="flex-1 h-8 bg-ink-100 rounded-lg overflow-hidden flex">
+                <div
+                  class="h-full bg-mint-500 flex items-center justify-center text-xs font-bold text-white"
+                  :style="{ width: (reportData.correctPredictions / (reportData.correctPredictions + reportData.incorrectPredictions) * 100) + '%' }"
+                >
+                  {{ Math.round(reportData.correctPredictions / (reportData.correctPredictions + reportData.incorrectPredictions) * 100) }}% correct
+                </div>
+                <div
+                  class="h-full bg-coral-400 flex items-center justify-center text-xs font-bold text-white"
+                  :style="{ width: (reportData.incorrectPredictions / (reportData.correctPredictions + reportData.incorrectPredictions) * 100) + '%' }"
+                >
+                  {{ Math.round(reportData.incorrectPredictions / (reportData.correctPredictions + reportData.incorrectPredictions) * 100) }}% wrong
+                </div>
+              </div>
+            </div>
+            <div class="text-xs text-ink-500">
+              {{ reportData.exactScorelines }} exact scoreline{{ reportData.exactScorelines !== 1 ? 's' : '' }} out of {{ reportData.correctPredictions + reportData.incorrectPredictions }} scored predictions
+              ({{ reportData.correctPredictions + reportData.incorrectPredictions > 0 ? Math.round(reportData.exactScorelines / (reportData.correctPredictions + reportData.incorrectPredictions) * 100) : 0 }}% hit rate)
+            </div>
+          </div>
+
+          <!-- Team distribution -->
+          <div v-if="reportData.teamDistribution.length" class="card p-5 space-y-3">
+            <h3 class="font-bold text-ink-900">Team popularity</h3>
+            <p class="text-sm text-ink-500">How many users backed each team.</p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div
+                v-for="(t, i) in reportData.teamDistribution"
+                :key="t.code"
+                class="flex items-center gap-3 p-2 rounded-lg"
+                :class="i < 3 ? 'bg-sky-50' : ''"
+              >
+                <span class="text-lg">{{ t.flag_emoji }}</span>
+                <span class="text-sm font-bold text-ink-900 w-12">{{ t.code }}</span>
+                <div class="flex-1 h-5 bg-ink-100 rounded overflow-hidden relative">
+                  <div
+                    class="h-full rounded"
+                    :class="i === 0 ? 'bg-sky-500' : i === 1 ? 'bg-sky-400' : i === 2 ? 'bg-sky-300' : 'bg-ink-300'"
+                    :style="{ width: (t.count / reportData.teamDistribution[0].count * 100) + '%' }"
+                  ></div>
+                </div>
+                <span class="text-sm font-bold text-ink-700 w-8 text-right tabular-nums">{{ t.count }}</span>
+              </div>
+            </div>
+          </div>
+
           <!-- Conversion funnel -->
           <div class="card p-5 space-y-3">
             <h3 class="font-bold text-ink-900">Conversion funnel</h3>
@@ -1374,7 +1500,7 @@ watch(activeTab, (tab) => {
                 <div
                   v-for="d in reportData.dailySignups"
                   :key="d.date"
-                  class="flex-1 min-w-[24px] flex flex-col items-center justify-end gap-1 group relative"
+                  class="flex-1 min-w-[24px] h-full flex flex-col items-center justify-end gap-1 group relative"
                 >
                   <div class="absolute -top-6 left-1/2 -translate-x-1/2 invisible group-hover:visible bg-ink-800 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap z-10">
                     {{ d.date.slice(5) }}: {{ d.count }}
@@ -1402,7 +1528,7 @@ watch(activeTab, (tab) => {
                 <div
                   v-for="d in reportData.dailyPredictions"
                   :key="d.date"
-                  class="flex-1 min-w-[24px] flex flex-col items-center justify-end gap-1 group relative"
+                  class="flex-1 min-w-[24px] h-full flex flex-col items-center justify-end gap-1 group relative"
                 >
                   <div class="absolute -top-6 left-1/2 -translate-x-1/2 invisible group-hover:visible bg-ink-800 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap z-10">
                     {{ d.date.slice(5) }}: {{ d.count }}

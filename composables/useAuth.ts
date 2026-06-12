@@ -18,6 +18,8 @@ interface SessionUser {
   is_account_valid: boolean
   is_staff: boolean
   total_points: number
+  correct_predictions_count: number
+  exact_scorelines_count: number
   backed_team_id: string | null
   backed_team?: { id: string; name: string; flag_emoji: string; code: string } | null
   backed_team_wins?: number
@@ -131,11 +133,11 @@ export const useAuth = () => {
   const hasAccount = computed(() => !!user.value?.account_number)
   const isStaff = computed(() => !!user.value?.is_staff)
   const isSycamoreUser = computed(() => !!user.value && !isGuest.value && hasAccount.value)
-  const needsUsername = computed(() => !!user.value && !user.value.is_guest && !user.value.username)
+  const needsUsername = computed(() => !!user.value && !user.value.is_guest && (!user.value.username || isAutoUsername(user.value.username)))
 
   const isAutoUsername = (u: string | null | undefined) => {
     if (!u) return true
-    return /^[a-z]+-[a-z]+-\d+$/.test(u)
+    return /^[a-z]+-[a-z]+-\d+$/.test(u) || /^[a-z]+\d+$/.test(u)
   }
 
   const displayName = computed(() => {

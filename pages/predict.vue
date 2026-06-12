@@ -2,7 +2,7 @@
 definePageMeta({ middleware: 'auth' })
 
 const supabase = useSupabase()
-const { user, isGuest, hasAccount, displayName, trackPulseEvent } = useAuth()
+const { user, isGuest, hasAccount, displayName, refreshUser, trackPulseEvent } = useAuth()
 const { config: campaign, load: loadCampaign } = useCampaign()
 const copiedAccount = ref(false)
 
@@ -11,8 +11,33 @@ const predictions = ref<Record<string, any>>({})
 const loading = ref(true)
 const view = ref<'today' | 'week' | 'past'>('today')
 
+// Celebratory banners
+const recentWins = ref<Array<{ id: string; title: string; body: string; type: string; metadata: any }>>([])
+const dismissedBanners = ref<Set<string>>(new Set())
+
+const visibleBanners = computed(() => recentWins.value.filter((n) => !dismissedBanners.value.has(n.id)))
+
+const dismissBanner = async (id: string) => {
+  dismissedBanners.value.add(id)
+  await supabase.from('notifications').update({ read: true }).eq('id', id)
+}
+
+const loadRecentWins = async () => {
+  if (!user.value) return
+  const { data } = await supabase
+    .from('notifications')
+    .select('id, title, body, type, metadata')
+    .eq('user_id', user.value.id)
+    .eq('read', false)
+    .in('type', ['prediction_correct', 'team_won'])
+    .order('created_at', { ascending: false })
+    .limit(5)
+  recentWins.value = data || []
+}
+
 const loadData = async () => {
   loading.value = true
+  await refreshUser()
   await loadCampaign()
   const { data: m } = await supabase
     .from('matches')
@@ -35,6 +60,7 @@ const loadData = async () => {
 
 onMounted(() => {
   loadData()
+  loadRecentWins()
   trackPulseEvent('predictions_viewed')
 })
 
@@ -73,8 +99,9 @@ const onSaved = (pred: any) => {
 
 const predictionsList = computed(() => Object.values(predictions.value) as any[])
 const predictionsCount = computed(() => predictionsList.value.length)
-const correctPredictions = computed(() => predictionsList.value.filter((p) => p.scored && p.points_awarded > 0).length)
-const exactScorelines = computed(() => predictionsList.value.filter((p) => p.scored && p.points_awarded >= 15).length)
+const scoredPredictionsCount = computed(() => predictionsList.value.filter((p) => p.scored).length)
+const correctPredictions = computed(() => user.value?.correct_predictions_count || 0)
+const exactScorelines = computed(() => user.value?.exact_scorelines_count || 0)
 
 const tabs = [
   { id: 'today', label: 'Today' },
@@ -96,6 +123,48 @@ const copyAccountNumber = async () => {
 
 <template>
   <div class="space-y-6">
+    <!-- Celebratory banners -->
+    <TransitionGroup name="banner" tag="div" class="space-y-3">
+      <div
+        v-for="banner in visibleBanners"
+        :key="banner.id"
+        :class="[
+          'relative rounded-2xl p-4 sm:p-5 border overflow-hidden',
+          banner.metadata?.points >= 15
+            ? 'bg-gradient-to-r from-sun-50 via-sun-100/50 to-mint-50 border-sun-200'
+            : banner.type === 'team_won'
+              ? 'bg-gradient-to-r from-sky-50 to-mint-50 border-sky-200'
+              : 'bg-gradient-to-r from-mint-50 to-sky-50 border-mint-200',
+        ]"
+      >
+        <button
+          @click="dismissBanner(banner.id)"
+          class="absolute top-3 right-3 w-6 h-6 rounded-full bg-white/80 hover:bg-white text-ink-400 hover:text-ink-600 grid place-items-center transition"
+        >
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+        <div class="flex items-center gap-4">
+          <div :class="[
+            'w-12 h-12 rounded-xl grid place-items-center shrink-0',
+            banner.metadata?.points >= 15 ? 'bg-sun-200' : banner.type === 'team_won' ? 'bg-sky-200' : 'bg-mint-200',
+          ]">
+            <span v-if="banner.metadata?.points >= 15" class="text-2xl">&#127942;</span>
+            <span v-else-if="banner.type === 'team_won'" class="text-2xl">&#11088;</span>
+            <span v-else class="text-2xl">&#9989;</span>
+          </div>
+          <div class="min-w-0 flex-1">
+            <div :class="[
+              'font-extrabold text-base leading-tight',
+              banner.metadata?.points >= 15 ? 'text-sun-800' : banner.type === 'team_won' ? 'text-sky-800' : 'text-mint-800',
+            ]">
+              {{ banner.title }}
+            </div>
+            <div v-if="banner.body" class="text-sm text-ink-600 mt-0.5">{{ banner.body }}</div>
+          </div>
+        </div>
+      </div>
+    </TransitionGroup>
+
     <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
       <div>
         <h1 class="text-3xl font-extrabold text-ink-900">Make your predictions</h1>
@@ -135,9 +204,9 @@ const copyAccountNumber = async () => {
 
     <!-- Shareable Stats Card -->
     <ShareStatsCard
-      v-if="user && !loading && predictionsCount > 0"
+      v-if="user && !loading && scoredPredictionsCount > 0"
       :total-points="user.total_points"
-      :predictions-count="predictionsCount"
+      :predictions-count="scoredPredictionsCount"
       :correct-predictions="correctPredictions"
       :exact-scorelines="exactScorelines"
       :backed-team="user.backed_team"

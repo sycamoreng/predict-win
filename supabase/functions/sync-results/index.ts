@@ -27,11 +27,41 @@ function deriveFirstName(name: string | null | undefined, username: string | nul
   return email.split("@")[0];
 }
 
-async function logEvent(userId: string | null, eventName: string, properties: Record<string, unknown>, templateData?: Record<string, unknown>) {
-  const email = properties.email as string | undefined;
-  let delivered = false;
+interface EmailPayload {
+  event_name: string;
+  to_email: string;
+  to_name: string;
+  dynamic_template_data: Record<string, unknown>;
+}
 
+interface PendingEvent {
+  userId: string | null;
+  eventName: string;
+  properties: Record<string, unknown>;
+}
+
+const pendingEmails: EmailPayload[] = [];
+const pendingEvents: PendingEvent[] = [];
+
+function queueEvent(userId: string | null, eventName: string, properties: Record<string, unknown>, templateData?: Record<string, unknown>) {
+  const email = properties.email as string | undefined;
   if (email) {
+    pendingEmails.push({
+      event_name: eventName,
+      to_email: email,
+      to_name: (properties.name as string) || "",
+      dynamic_template_data: templateData || { ...properties, user_id: userId },
+    });
+  }
+  pendingEvents.push({ userId, eventName, properties });
+}
+
+async function flushEmails() {
+  if (!pendingEmails.length) return;
+
+  const BATCH_SIZE = 20;
+  for (let i = 0; i < pendingEmails.length; i += BATCH_SIZE) {
+    const batch = pendingEmails.slice(i, i + BATCH_SIZE);
     try {
       const res = await fetch(SEND_EMAIL_URL, {
         method: "POST",
@@ -39,32 +69,36 @@ async function logEvent(userId: string | null, eventName: string, properties: Re
           "Content-Type": "application/json",
           Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
         },
-        body: JSON.stringify({
-          event_name: eventName,
-          to_email: email,
-          to_name: properties.name || "",
-          dynamic_template_data: templateData || { ...properties, user_id: userId },
-        }),
+        body: JSON.stringify(batch),
       });
       const result = await res.json().catch(() => null);
-      delivered = result?.results?.[0]?.delivered === true;
-    } catch {
-      delivered = false;
-    }
+      const results = result?.results || [];
+      for (let j = 0; j < batch.length; j++) {
+        const eventIdx = i + j;
+        if (eventIdx < pendingEvents.length && results[j]?.delivered) {
+          (pendingEvents[eventIdx] as any)._delivered = true;
+        }
+      }
+    } catch { /* best-effort */ }
   }
 
-  await supabase.from("analytics_events").insert({
-    user_id: userId,
-    event_name: eventName,
-    properties,
-    delivered_to_netcore: delivered,
-  });
+  for (const evt of pendingEvents) {
+    await supabase.from("analytics_events").insert({
+      user_id: evt.userId,
+      event_name: evt.eventName,
+      properties: evt.properties,
+      delivered_to_netcore: (evt as any)._delivered === true,
+    });
+  }
+
+  pendingEmails.length = 0;
+  pendingEvents.length = 0;
 }
 
 async function refreshUserCounters(userId: string) {
   const { data: rows } = await supabase
     .from("predictions")
-    .select("points_awarded, predicted_home_score, predicted_away_score, match:matches!predictions_match_id_fkey(home_score, away_score, status)")
+    .select("points_awarded, predicted_home_score, predicted_away_score, wants_exact_score_pick, match:matches!predictions_match_id_fkey(home_score, away_score, status)")
     .eq("user_id", userId);
   let total = 0;
   let correct = 0;
@@ -75,7 +109,7 @@ async function refreshUserCounters(userId: string) {
     if (pts > 0) correct++;
     const m = r.match as any;
     if (
-      m && m.status === "completed" &&
+      r.wants_exact_score_pick && m && m.status === "completed" &&
       m.home_score === r.predicted_home_score &&
       m.away_score === r.predicted_away_score
     ) {
@@ -269,12 +303,15 @@ async function rescoreMatch(matchId: string) {
     let firstGoalscorerPoints = 0;
     let exactScorelinePoints = 0;
 
-    const winnerCorrect =
-      (winnerId === null && p.predicted_winner_team_id === null) ||
-      (winnerId !== null && p.predicted_winner_team_id === winnerId);
-    if (winnerCorrect) matchResultPoints = 5;
+    if (p.wants_winner_pick) {
+      const winnerCorrect =
+        (winnerId === null && p.predicted_winner_team_id === null) ||
+        (winnerId !== null && p.predicted_winner_team_id === winnerId);
+      if (winnerCorrect) matchResultPoints = 5;
+    }
 
     if (
+      p.wants_first_to_score_pick &&
       match.first_to_score_team_id &&
       p.predicted_first_to_score_team_id === match.first_to_score_team_id
     ) {
@@ -282,6 +319,7 @@ async function rescoreMatch(matchId: string) {
     }
 
     if (
+      p.wants_exact_score_pick &&
       p.predicted_home_score === match.home_score &&
       p.predicted_away_score === match.away_score
     ) {
@@ -301,7 +339,7 @@ async function rescoreMatch(matchId: string) {
     const actualScore = `${match.home_score}-${match.away_score}`;
     const predictedScore = `${p.predicted_home_score}-${p.predicted_away_score}`;
 
-    await logEvent(p.user_id, pts > 0 ? "prediction_correct" : "prediction_incorrect", {
+    queueEvent(p.user_id, pts > 0 ? "prediction_correct" : "prediction_incorrect", {
       email: u?.email,
       name: u?.name || "",
       match_id: match.id,
@@ -334,6 +372,21 @@ async function rescoreMatch(matchId: string) {
       predictedScore,
       predictLink: `${APP_BASE_URL}/predict`,
     });
+
+    // In-app notification
+    const notifTitle = pts > 0
+      ? `+${pts} points! ${homeTeam} ${actualScore} ${awayTeam}`
+      : `${homeTeam} ${actualScore} ${awayTeam} - No points`;
+    const notifBody = pts > 0
+      ? `Your prediction (${predictedScore}) earned you ${pts} points.`
+      : `Your prediction (${predictedScore}) didn't score this time. Keep going!`;
+    await supabase.from("notifications").insert({
+      user_id: p.user_id,
+      type: pts > 0 ? "prediction_correct" : "prediction_incorrect",
+      title: notifTitle,
+      body: notifBody,
+      metadata: { match_id: match.id, points: pts, actual_score: actualScore, predicted_score: predictedScore },
+    });
   }
 
   if (winnerId) {
@@ -355,7 +408,7 @@ async function rescoreMatch(matchId: string) {
         .update({ backed_team_wins: (b.backed_team_wins || 0) + 1, updated_at: new Date().toISOString() })
         .eq("id", b.id);
 
-      await logEvent(b.id, "team_won", {
+      queueEvent(b.id, "team_won", {
         email: b.email,
         name: b.name || "",
         match_id: match.id,
@@ -369,6 +422,14 @@ async function rescoreMatch(matchId: string) {
         teamName: winnerName,
         amount: null,
         savingsLink: `${APP_BASE_URL}/settings`,
+      });
+
+      await supabase.from("notifications").insert({
+        user_id: b.id,
+        type: "team_won",
+        title: `${winnerName} won!`,
+        body: `Your backed team won ${match.home_score}-${match.away_score}. Keep the momentum going!`,
+        metadata: { match_id: match.id, team_id: winnerId, score: `${match.home_score}-${match.away_score}` },
       });
     }
 
@@ -405,6 +466,9 @@ async function rescoreMatch(matchId: string) {
   if (match.stage === "group") {
     await eliminateGroupStageTeams();
   }
+
+  // Flush all queued emails in batches
+  await flushEmails();
 }
 
 async function importFixtures(league: number, season: number) {
