@@ -610,7 +610,10 @@ const removeAdmin = async (targetEmail: string) => {
 // --- Reports ---
 const reportLoading = ref(false)
 const guestListLoading = ref(false)
+const guestExportLoading = ref(false)
 const guestList = ref<Array<{ email: string; username: string; social_handles: any; created_at: string; prediction_count: number }>>([])
+const reportDateFrom = ref('')
+const reportDateTo = ref('')
 const reportData = ref<{
   totalUsers: number
   sycamoreUsers: number
@@ -632,38 +635,43 @@ const reportData = ref<{
 const loadReports = async () => {
   reportLoading.value = true
   try {
-    const { count: totalUsers } = await supabase
-      .from('synced_users')
-      .select('*', { count: 'exact', head: true })
+    const from = reportDateFrom.value || null
+    const to = reportDateTo.value ? reportDateTo.value + 'T23:59:59' : null
 
-    const { count: sycamoreUsers } = await supabase
-      .from('synced_users')
-      .select('*', { count: 'exact', head: true })
-      .not('account_number', 'is', null)
+    let usersQuery = supabase.from('synced_users').select('*', { count: 'exact', head: true })
+    if (from) usersQuery = usersQuery.gte('created_at', from)
+    if (to) usersQuery = usersQuery.lte('created_at', to)
+    const { count: totalUsers } = await usersQuery
 
-    const { count: guestUsers } = await supabase
-      .from('synced_users')
-      .select('*', { count: 'exact', head: true })
-      .is('account_number', null)
+    let sycQuery = supabase.from('synced_users').select('*', { count: 'exact', head: true }).not('account_number', 'is', null)
+    if (from) sycQuery = sycQuery.gte('created_at', from)
+    if (to) sycQuery = sycQuery.lte('created_at', to)
+    const { count: sycamoreUsers } = await sycQuery
 
-    const { count: activeCustomers } = await supabase
-      .from('synced_users')
-      .select('*', { count: 'exact', head: true })
-      .eq('active_customer_flag', true)
+    let guestQuery = supabase.from('synced_users').select('*', { count: 'exact', head: true }).is('account_number', null)
+    if (from) guestQuery = guestQuery.gte('created_at', from)
+    if (to) guestQuery = guestQuery.lte('created_at', to)
+    const { count: guestUsers } = await guestQuery
 
-    const { count: usersWithTeam } = await supabase
-      .from('synced_users')
-      .select('*', { count: 'exact', head: true })
-      .not('backed_team_id', 'is', null)
+    let activeQuery = supabase.from('synced_users').select('*', { count: 'exact', head: true }).eq('active_customer_flag', true)
+    if (from) activeQuery = activeQuery.gte('created_at', from)
+    if (to) activeQuery = activeQuery.lte('created_at', to)
+    const { count: activeCustomers } = await activeQuery
 
-    const { count: savingsEnabled } = await supabase
-      .from('synced_users')
-      .select('*', { count: 'exact', head: true })
-      .eq('auto_savings_enabled', true)
+    let teamQuery = supabase.from('synced_users').select('*', { count: 'exact', head: true }).not('backed_team_id', 'is', null)
+    if (from) teamQuery = teamQuery.gte('created_at', from)
+    if (to) teamQuery = teamQuery.lte('created_at', to)
+    const { count: usersWithTeam } = await teamQuery
 
-    const { count: totalPredictions } = await supabase
-      .from('predictions')
-      .select('*', { count: 'exact', head: true })
+    let savingsQuery = supabase.from('synced_users').select('*', { count: 'exact', head: true }).eq('auto_savings_enabled', true)
+    if (from) savingsQuery = savingsQuery.gte('created_at', from)
+    if (to) savingsQuery = savingsQuery.lte('created_at', to)
+    const { count: savingsEnabled } = await savingsQuery
+
+    let predsQuery = supabase.from('predictions').select('*', { count: 'exact', head: true })
+    if (from) predsQuery = predsQuery.gte('created_at', from)
+    if (to) predsQuery = predsQuery.lte('created_at', to)
+    const { count: totalPredictions } = await predsQuery
 
     const { count: matchesCompleted } = await supabase
       .from('matches')
@@ -675,28 +683,25 @@ const loadReports = async () => {
       .select('*', { count: 'exact', head: true })
       .eq('status', 'scheduled')
 
-    const { count: correctPredictions } = await supabase
-      .from('predictions')
-      .select('*', { count: 'exact', head: true })
-      .eq('scored', true)
-      .gt('points_awarded', 0)
+    let correctQuery = supabase.from('predictions').select('*', { count: 'exact', head: true }).eq('scored', true).gt('points_awarded', 0)
+    if (from) correctQuery = correctQuery.gte('created_at', from)
+    if (to) correctQuery = correctQuery.lte('created_at', to)
+    const { count: correctPredictions } = await correctQuery
 
-    const { count: incorrectPredictions } = await supabase
-      .from('predictions')
-      .select('*', { count: 'exact', head: true })
-      .eq('scored', true)
-      .eq('points_awarded', 0)
+    let incorrectQuery = supabase.from('predictions').select('*', { count: 'exact', head: true }).eq('scored', true).eq('points_awarded', 0)
+    if (from) incorrectQuery = incorrectQuery.gte('created_at', from)
+    if (to) incorrectQuery = incorrectQuery.lte('created_at', to)
+    const { count: incorrectPredictions } = await incorrectQuery
 
-    const { count: exactScorelines } = await supabase
-      .from('predictions')
-      .select('*', { count: 'exact', head: true })
-      .eq('scored', true)
-      .gte('points_awarded', 15)
+    let exactQuery = supabase.from('predictions').select('*', { count: 'exact', head: true }).eq('scored', true).gte('points_awarded', 15)
+    if (from) exactQuery = exactQuery.gte('created_at', from)
+    if (to) exactQuery = exactQuery.lte('created_at', to)
+    const { count: exactScorelines } = await exactQuery
 
-    const { data: teamData } = await supabase
-      .from('synced_users')
-      .select('backed_team_id, backed_team:teams!synced_users_backed_team_id_fkey(code, name, flag_emoji)')
-      .not('backed_team_id', 'is', null)
+    let teamDataQuery = supabase.from('synced_users').select('backed_team_id, backed_team:teams!synced_users_backed_team_id_fkey(code, name, flag_emoji)').not('backed_team_id', 'is', null)
+    if (from) teamDataQuery = teamDataQuery.gte('created_at', from)
+    if (to) teamDataQuery = teamDataQuery.lte('created_at', to)
+    const { data: teamData } = await teamDataQuery
 
     const teamCounts: Record<string, { code: string; name: string; flag_emoji: string; count: number }> = {}
     for (const row of teamData || []) {
@@ -711,10 +716,14 @@ const loadReports = async () => {
     const teamDistribution = Object.values(teamCounts).sort((a, b) => b.count - a.count)
 
     const { data: signupRows } = await supabase.rpc('get_daily_signups')
-    const dailySignups = (signupRows || []).map((r: any) => ({ date: r.date, count: Number(r.count) }))
+    let dailySignups = (signupRows || []).map((r: any) => ({ date: r.date, count: Number(r.count) }))
+    if (from) dailySignups = dailySignups.filter((d) => d.date >= from)
+    if (to) dailySignups = dailySignups.filter((d) => d.date <= (reportDateTo.value || '9999-12-31'))
 
     const { data: predRows } = await supabase.rpc('get_daily_predictions')
-    const dailyPredictions = (predRows || []).map((r: any) => ({ date: r.date, count: Number(r.count) }))
+    let dailyPredictions = (predRows || []).map((r: any) => ({ date: r.date, count: Number(r.count) }))
+    if (from) dailyPredictions = dailyPredictions.filter((d) => d.date >= from)
+    if (to) dailyPredictions = dailyPredictions.filter((d) => d.date <= (reportDateTo.value || '9999-12-31'))
 
     reportData.value = {
       totalUsers: totalUsers || 0,
@@ -773,6 +782,78 @@ const loadGuestList = async () => {
     }))
   } finally {
     guestListLoading.value = false
+  }
+}
+
+const exportGuestCsv = async () => {
+  guestExportLoading.value = true
+  try {
+    const PAGE_SIZE = 1000
+    let allGuests: any[] = []
+    let offset = 0
+    let hasMore = true
+
+    while (hasMore) {
+      let query = supabase
+        .from('synced_users')
+        .select('id, email, name, username, phone_number, social_handles, created_at, total_points')
+        .is('account_number', null)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + PAGE_SIZE - 1)
+
+      if (reportDateFrom.value) query = query.gte('created_at', reportDateFrom.value)
+      if (reportDateTo.value) query = query.lte('created_at', reportDateTo.value + 'T23:59:59')
+
+      const { data } = await query
+      if (!data || data.length === 0) { hasMore = false; break }
+      allGuests = allGuests.concat(data)
+      if (data.length < PAGE_SIZE) hasMore = false
+      else offset += PAGE_SIZE
+    }
+
+    const guestIds = allGuests.map((g) => g.id)
+    const predCounts: Record<string, number> = {}
+
+    for (let i = 0; i < guestIds.length; i += 500) {
+      const batch = guestIds.slice(i, i + 500)
+      const { data: preds } = await supabase
+        .from('predictions')
+        .select('user_id')
+        .in('user_id', batch)
+      for (const p of preds || []) {
+        predCounts[p.user_id] = (predCounts[p.user_id] || 0) + 1
+      }
+    }
+
+    const headers = ['email', 'name', 'username', 'phone_number', 'twitter', 'instagram', 'threads', 'tiktok', 'total_points', 'predictions', 'joined']
+    const csv = [headers.join(',')]
+      .concat(allGuests.map((g) => [
+        csvCell(g.email),
+        csvCell(g.name),
+        csvCell(g.username || ''),
+        csvCell(g.phone_number || ''),
+        csvCell(g.social_handles?.twitter || ''),
+        csvCell(g.social_handles?.instagram || ''),
+        csvCell(g.social_handles?.threads || ''),
+        csvCell(g.social_handles?.tiktok || ''),
+        csvCell(g.total_points || 0),
+        csvCell(predCounts[g.id] || 0),
+        csvCell(g.created_at?.slice(0, 10) || ''),
+      ].join(',')))
+      .join('\n')
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const suffix = reportDateFrom.value || reportDateTo.value
+      ? `-${reportDateFrom.value || 'start'}-to-${reportDateTo.value || 'now'}`
+      : ''
+    a.download = `users-no-account-number${suffix}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  } finally {
+    guestExportLoading.value = false
   }
 }
 
@@ -1347,6 +1428,33 @@ watch(activeTab, (tab) => {
           </button>
         </div>
 
+        <!-- Date filter -->
+        <div class="card p-4">
+          <div class="flex flex-wrap items-end gap-3">
+            <div>
+              <label class="label !mb-1">From</label>
+              <input v-model="reportDateFrom" type="date" class="input !py-2 w-40" />
+            </div>
+            <div>
+              <label class="label !mb-1">To</label>
+              <input v-model="reportDateTo" type="date" class="input !py-2 w-40" />
+            </div>
+            <button @click="loadReports" :disabled="reportLoading" class="btn-primary !py-2 !px-4 text-sm">
+              {{ reportLoading ? 'Loading...' : 'Apply filter' }}
+            </button>
+            <button
+              v-if="reportDateFrom || reportDateTo"
+              @click="reportDateFrom = ''; reportDateTo = ''; loadReports()"
+              class="pill bg-ink-100 text-ink-700 hover:bg-ink-200 text-xs"
+            >
+              Clear dates
+            </button>
+          </div>
+          <p v-if="reportDateFrom || reportDateTo" class="text-xs text-ink-500 mt-2">
+            Showing data {{ reportDateFrom ? `from ${reportDateFrom}` : '' }}{{ reportDateFrom && reportDateTo ? ' ' : '' }}{{ reportDateTo ? `to ${reportDateTo}` : '' }}
+          </p>
+        </div>
+
         <div v-if="reportLoading && !reportData" class="card h-72 animate-pulse bg-ink-100/40"></div>
 
         <template v-else-if="reportData">
@@ -1549,8 +1657,19 @@ watch(activeTab, (tab) => {
 
           <!-- Guest users list -->
           <div class="card p-5 space-y-3">
-            <h3 class="font-bold text-ink-900">Users without account numbers</h3>
-            <p class="text-sm text-ink-500">These users have signed in but don't have a Sycamore account number yet. They can predict but can't access the leaderboard, team backing, or auto-savings.</p>
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <h3 class="font-bold text-ink-900">Users without account numbers</h3>
+                <p class="text-sm text-ink-500">These users have signed in but don't have a Sycamore account number yet.</p>
+              </div>
+              <button
+                @click="exportGuestCsv"
+                :disabled="guestExportLoading || !reportData || reportData.guestUsers === 0"
+                class="pill bg-mint-50 text-mint-700 hover:bg-mint-100 text-xs shrink-0"
+              >
+                {{ guestExportLoading ? 'Exporting...' : 'Export CSV' }}
+              </button>
+            </div>
             <div v-if="reportData.guestUsers === 0" class="text-sm text-ink-400">All users have account numbers.</div>
             <div v-else class="text-sm text-ink-600">
               {{ reportData.guestUsers }} users without an account number.
