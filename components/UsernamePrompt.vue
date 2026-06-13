@@ -36,7 +36,7 @@ const save = async () => {
   saving.value = true
   const { error: dbError } = await supabase
     .from('synced_users')
-    .update({ username: trimmed })
+    .update({ username: trimmed, username_set_by_user: true })
     .eq('id', user.value!.id)
 
   if (dbError) {
@@ -49,7 +49,7 @@ const save = async () => {
     return
   }
 
-  const updated = { ...user.value!, username: trimmed }
+  const updated = { ...user.value!, username: trimmed, username_set_by_user: true }
   setSession(updated)
   trackPulseEvent('username_set', { username: trimmed, method: 'manual' })
   emit('done', trimmed)
@@ -62,21 +62,21 @@ const skip = async () => {
 
   const { error: dbError } = await supabase
     .from('synced_users')
-    .update({ username: fallback })
+    .update({ username: fallback, username_set_by_user: true })
     .eq('id', user.value!.id)
 
   if (dbError) {
     const retry = generate().toLowerCase()
     await supabase
       .from('synced_users')
-      .update({ username: retry })
+      .update({ username: retry, username_set_by_user: true })
       .eq('id', user.value!.id)
-    const updated = { ...user.value!, username: retry }
+    const updated = { ...user.value!, username: retry, username_set_by_user: true }
     setSession(updated)
     trackPulseEvent('username_set', { username: retry, method: 'skipped' })
     emit('done', retry)
   } else {
-    const updated = { ...user.value!, username: fallback }
+    const updated = { ...user.value!, username: fallback, username_set_by_user: true }
     setSession(updated)
     trackPulseEvent('username_set', { username: fallback, method: 'skipped' })
     emit('done', fallback)

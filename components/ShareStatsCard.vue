@@ -4,10 +4,12 @@ const props = defineProps<{
   predictionsCount: number
   correctPredictions: number
   exactScorelines: number
+  rank?: number
   backedTeam?: { name: string; flag_emoji: string; code: string } | null
 }>()
 
 const { shareToTwitter, shareToWhatsApp, shareToThreads, copyToClipboard, siteUrl } = useShare()
+const { user } = useAuth()
 
 const showShare = ref(false)
 const copied = ref(false)
@@ -32,6 +34,16 @@ const shareText = computed(() => {
   lines.push('#SycamorePredictor #WorldCup2026')
   return lines.join('\n')
 })
+
+const imageData = computed(() => ({
+  username: user.value?.username || user.value?.email?.split('@')[0] || 'player',
+  totalPoints: props.totalPoints,
+  predictionsCount: props.predictionsCount,
+  correctPredictions: props.correctPredictions,
+  exactScorelines: props.exactScorelines,
+  rank: props.rank,
+  backedTeam: props.backedTeam,
+}))
 
 const doCopy = async () => {
   await copyToClipboard({ text: shareText.value, url: siteUrl })
@@ -85,6 +97,7 @@ const doCopy = async () => {
     <ShareModal
       v-if="showShare"
       :text="shareText"
+      :image-data="imageData"
       title="My Predictor League Stats"
       @close="showShare = false"
     />

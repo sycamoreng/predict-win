@@ -1604,17 +1604,17 @@ watch(activeTab, (tab) => {
             <h3 class="font-bold text-ink-900">Daily signups</h3>
             <div v-if="!reportData.dailySignups.length" class="text-sm text-ink-400">No data yet.</div>
             <div v-else class="overflow-x-auto">
-              <div class="flex items-end gap-1 h-32 min-w-[400px]">
+              <div class="flex items-end gap-1 h-40 pt-8 min-w-[400px] relative">
                 <div
                   v-for="d in reportData.dailySignups"
                   :key="d.date"
-                  class="flex-1 min-w-[24px] h-full flex flex-col items-center justify-end gap-1 group relative"
+                  class="flex-1 min-w-[24px] h-full flex flex-col items-center justify-end group relative"
                 >
-                  <div class="absolute -top-6 left-1/2 -translate-x-1/2 invisible group-hover:visible bg-ink-800 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap z-10">
+                  <div class="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 bg-ink-800 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap z-10 pointer-events-none transition-opacity">
                     {{ d.date.slice(5) }}: {{ d.count }}
                   </div>
                   <div
-                    class="w-full bg-sky-400 rounded-sm hover:bg-sky-500 transition"
+                    class="w-full bg-sky-400 rounded-sm group-hover:bg-sky-500 transition cursor-pointer"
                     :style="{ height: Math.max(4, (d.count / Math.max(...reportData.dailySignups.map(x => x.count))) * 100) + '%' }"
                   ></div>
                 </div>
@@ -1632,17 +1632,17 @@ watch(activeTab, (tab) => {
             <h3 class="font-bold text-ink-900">Daily predictions</h3>
             <div v-if="!reportData.dailyPredictions.length" class="text-sm text-ink-400">No data yet.</div>
             <div v-else class="overflow-x-auto">
-              <div class="flex items-end gap-1 h-32 min-w-[400px]">
+              <div class="flex items-end gap-1 h-40 pt-8 min-w-[400px] relative">
                 <div
                   v-for="d in reportData.dailyPredictions"
                   :key="d.date"
-                  class="flex-1 min-w-[24px] h-full flex flex-col items-center justify-end gap-1 group relative"
+                  class="flex-1 min-w-[24px] h-full flex flex-col items-center justify-end group relative"
                 >
-                  <div class="absolute -top-6 left-1/2 -translate-x-1/2 invisible group-hover:visible bg-ink-800 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap z-10">
+                  <div class="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 bg-ink-800 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap z-10 pointer-events-none transition-opacity">
                     {{ d.date.slice(5) }}: {{ d.count }}
                   </div>
                   <div
-                    class="w-full bg-mint-400 rounded-sm hover:bg-mint-500 transition"
+                    class="w-full bg-mint-400 rounded-sm group-hover:bg-mint-500 transition cursor-pointer"
                     :style="{ height: Math.max(4, (d.count / Math.max(...reportData.dailyPredictions.map(x => x.count))) * 100) + '%' }"
                   ></div>
                 </div>

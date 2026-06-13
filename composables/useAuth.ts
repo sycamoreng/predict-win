@@ -10,6 +10,7 @@ interface SessionUser {
   email: string
   name: string
   username?: string | null
+  username_set_by_user?: boolean
   core_user_id?: string | null
   social_handles?: SocialHandles | null
   account_number: string | null
@@ -133,7 +134,7 @@ export const useAuth = () => {
   const hasAccount = computed(() => !!user.value?.account_number)
   const isStaff = computed(() => !!user.value?.is_staff)
   const isSycamoreUser = computed(() => !!user.value && !isGuest.value && hasAccount.value)
-  const needsUsername = computed(() => !!user.value && !user.value.is_guest && (!user.value.username || isAutoUsername(user.value.username)))
+  const needsUsername = computed(() => !!user.value && !user.value.is_guest && !user.value.username_set_by_user && (!user.value.username || isAutoUsername(user.value.username)))
 
   const isAutoUsername = (u: string | null | undefined) => {
     if (!u) return true
