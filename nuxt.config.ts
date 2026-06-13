@@ -1,7 +1,7 @@
 export default defineNuxtConfig({
   compatibilityDate: '2024-04-03',
   devtools: { enabled: false },
-  modules: ['@nuxtjs/tailwindcss', '~/modules/pulse'],
+  modules: ['@nuxtjs/tailwindcss', '@sycamoreng/pulse-nuxt'],
   css: ['~/assets/css/main.css'],
   app: {
     head: {
