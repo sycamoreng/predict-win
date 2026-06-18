@@ -3,6 +3,7 @@ interface CampaignConfig {
   leaderboard_enabled: boolean
   team_picking_enabled: boolean
   campaign_name: string
+  week_start_date: string
 }
 
 const DEFAULT_CONFIG: CampaignConfig = {
@@ -10,6 +11,7 @@ const DEFAULT_CONFIG: CampaignConfig = {
   leaderboard_enabled: false,
   team_picking_enabled: false,
   campaign_name: 'FIFA World Cup 2026',
+  week_start_date: '2026-06-11',
 }
 
 export const useCampaign = () => {

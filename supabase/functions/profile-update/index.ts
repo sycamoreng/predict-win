@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+import { pulseTrack } from "../_shared/pulse.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -90,6 +91,15 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    pulseTrack(email.trim().toLowerCase(), "profile_updated_server", {
+      user_id,
+      email: email.trim().toLowerCase(),
+      username_changed: username !== undefined,
+      new_username: username !== undefined ? username.trim().toLowerCase() : null,
+      social_handles_changed: social_handles !== undefined,
+      social_handles: social_handles !== undefined ? social_handles : null,
+    });
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

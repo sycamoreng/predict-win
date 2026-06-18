@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+import { pulseTrack } from "../_shared/pulse.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -511,6 +512,24 @@ Deno.serve(async (req: Request) => {
       const awayTeamName = (match.away_team as any).code;
 
       // Log analytics event only (no email on each prediction — emails sent by cron at lock time)
+      pulseTrack(user.email || user.id, "prediction_submitted_server", {
+        user_id: user.id,
+        email: user.email,
+        match_id,
+        match: `${homeTeamName}-${awayTeamName}`,
+        team_a: homeTeamName,
+        team_b: awayTeamName,
+        predicted_home_score: homeScoreNum,
+        predicted_away_score: awayScoreNum,
+        predicted_winner_team_id: derivedWinner,
+        predicted_first_to_score_team_id: firstToScoreVal,
+        wants_winner_pick: wantsWinner,
+        wants_first_to_score_pick: wantsFirstToScore,
+        wants_exact_score_pick: wantsExactScore,
+        backed_team_id: user.backed_team_id || null,
+        is_first_prediction: predCount === 1,
+        prediction_count: predCount || 0,
+      });
       await supabase.from("analytics_events").insert({
         user_id: user.id,
         event_name: "prediction_submitted",
@@ -583,6 +602,20 @@ Deno.serve(async (req: Request) => {
         });
       }
 
+      const { data: backedTeam } = await supabase.from("teams").select("name, code").eq("id", team_id).maybeSingle();
+      const previousTeamId = user.backed_team_id;
+      const isSwitching = previousTeamId && previousTeamId !== team_id;
+      pulseTrack(user.email || user.id, "team_backed_server", {
+        user_id: user.id,
+        email: user.email,
+        team_id,
+        team_name: backedTeam?.name || null,
+        team_code: backedTeam?.code || null,
+        previous_team_id: previousTeamId || null,
+        is_first_back: !previousTeamId,
+        is_switch: !!isSwitching,
+      });
+
       return new Response(JSON.stringify({ success: true }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -645,6 +678,18 @@ Deno.serve(async (req: Request) => {
         backedTeamName = bt?.name || "";
       }
 
+      pulseTrack(user.email || user.id, enabled ? "auto_savings_enabled_server" : "auto_savings_disabled_server", {
+        user_id: user.id,
+        email: user.email,
+        auto_savings_enabled: !!enabled,
+        auto_savings_amount: enabled ? Number(amount) : null,
+        auto_savings_duration: enabled ? Number(duration) : null,
+        backed_team_id: user.backed_team_id || null,
+        backed_team_name: backedTeamName || null,
+        account_number: user.account_number || null,
+        has_account: !!user.account_number,
+      });
+
       await logEvent(user.id, enabled ? "auto_savings_enabled" : "auto_savings_disabled", {
         email: user.email,
         name: user.name || "",
@@ -693,6 +738,14 @@ Deno.serve(async (req: Request) => {
       }
 
       await rescoreMatch(match_id);
+
+      pulseTrack(email, "result_submitted", {
+        admin_email: email,
+        match_id,
+        home_score: Number(home_score),
+        away_score: Number(away_score),
+        first_to_score_team_id: first_to_score_team_id || null,
+      });
 
       return new Response(JSON.stringify({ success: true }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -747,6 +800,14 @@ Deno.serve(async (req: Request) => {
       for (const uid of userIds) {
         await refreshUserCounters(uid);
       }
+
+      pulseTrack(email, "match_status_changed", {
+        admin_email: email,
+        match_id,
+        new_status: status,
+        kickoff_at: kickoff_at || null,
+        affected_users: userIds.length,
+      });
 
       return new Response(JSON.stringify({ success: true, status, affected_users: userIds.length }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -874,6 +935,15 @@ Deno.serve(async (req: Request) => {
       if (error) throw new Error(error.message);
 
       const { data: team } = await supabase.from("teams").select("name, code").eq("id", team_id).maybeSingle();
+
+      pulseTrack(email, isEliminated ? "team_eliminated_admin" : "team_reinstated_admin", {
+        admin_email: email,
+        team_id,
+        team_name: team?.name || null,
+        team_code: team?.code || null,
+        is_eliminated: isEliminated,
+      });
+
       await logEvent(null, isEliminated ? "team_eliminated" : "team_reinstated", {
         team_id,
         team_name: team?.name,

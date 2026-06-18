@@ -35,7 +35,8 @@ const shareText = computed(() => {
   return lines.join('\n')
 })
 
-const imageData = computed(() => ({
+const imageCardProps = computed(() => ({
+  variant: 'stats' as const,
   username: user.value?.username || user.value?.email?.split('@')[0] || 'player',
   totalPoints: props.totalPoints,
   predictionsCount: props.predictionsCount,
@@ -97,7 +98,7 @@ const doCopy = async () => {
     <ShareModal
       v-if="showShare"
       :text="shareText"
-      :image-data="imageData"
+      :image-card-props="imageCardProps"
       title="My Predictor League Stats"
       @close="showShare = false"
     />

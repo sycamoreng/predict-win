@@ -41,14 +41,28 @@ async function adminHasPermission(email: string, permission: AdminPermission): P
   return (ROLE_PERMISSIONS[data.role] || []).includes(permission);
 }
 
-function weekBounds(refIso?: string): { start: string; end: string } {
+async function getWeekAnchor(): Promise<Date> {
+  const { data } = await supabase
+    .from("campaign_config")
+    .select("week_start_date")
+    .eq("id", 1)
+    .maybeSingle();
+  if (data?.week_start_date) {
+    return new Date(data.week_start_date + "T00:00:00Z");
+  }
+  return new Date("2026-06-11T00:00:00Z");
+}
+
+function weekBoundsFromAnchor(anchor: Date, refIso?: string): { start: string; end: string; weekNumber: number } {
   const ref = refIso ? new Date(refIso) : new Date();
-  const start = new Date(Date.UTC(
-    ref.getUTCFullYear(), ref.getUTCMonth(), ref.getUTCDate() - ref.getUTCDay(),
-    0, 0, 0, 0,
-  ));
+  const refUtc = Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth(), ref.getUTCDate());
+  const anchorMs = anchor.getTime();
+  let daysSince = Math.floor((refUtc - anchorMs) / 86_400_000);
+  if (daysSince < 0) daysSince = 0;
+  const weekIndex = Math.floor(daysSince / 7);
+  const start = new Date(anchorMs + weekIndex * 7 * 86_400_000);
   const end = new Date(start.getTime() + 7 * 86_400_000);
-  return { start: start.toISOString(), end: end.toISOString() };
+  return { start: start.toISOString(), end: end.toISOString(), weekNumber: weekIndex + 1 };
 }
 
 interface Aggregate {
@@ -59,13 +73,14 @@ interface Aggregate {
   account_number: string;
   phone_number: string;
   social_handles: Record<string, string> | null;
+  is_staff: boolean;
   week_points: number;
   exact_scorelines: number;
   correct_predictions: number;
   matches_scored: number;
 }
 
-async function buildWeeklyWinners(weekStart: string, weekEnd: string, topN: number) {
+async function buildWeeklyWinners(weekStart: string, weekEnd: string, topN: number, staffFilter?: 'staff' | 'public' | 'all') {
   const { data: completed } = await supabase
     .from("matches")
     .select("id, home_score, away_score")
@@ -82,15 +97,32 @@ async function buildWeeklyWinners(weekStart: string, weekEnd: string, topN: numb
   for (const m of matches) matchById.set(m.id, { home_score: m.home_score, away_score: m.away_score });
 
   const matchIds = matches.map((m) => m.id);
-  const { data: preds } = await supabase
-    .from("predictions")
-    .select("user_id, match_id, points_awarded, predicted_home_score, predicted_away_score, user:synced_users!predictions_user_id_fkey(id, name, username, email, account_number, phone_number, social_handles, active_customer_flag, is_account_valid)")
-    .in("match_id", matchIds);
+
+  // Fetch all predictions in pages to avoid Supabase's default 1000-row limit
+  let preds: any[] = [];
+  const PAGE_SIZE = 1000;
+  let page = 0;
+  while (true) {
+    const { data: batch } = await supabase
+      .from("predictions")
+      .select("user_id, match_id, points_awarded, predicted_home_score, predicted_away_score, user:synced_users!predictions_user_id_fkey(id, name, username, email, account_number, phone_number, social_handles, active_customer_flag, is_account_valid, is_staff)")
+      .in("match_id", matchIds)
+      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+    if (!batch || batch.length === 0) break;
+    preds = preds.concat(batch);
+    if (batch.length < PAGE_SIZE) break;
+    page++;
+  }
 
   const agg = new Map<string, Aggregate>();
-  for (const p of preds || []) {
+  for (const p of preds) {
     const u = p.user as any;
     if (!u || !u.active_customer_flag || !u.is_account_valid) continue;
+
+    // Apply staff filter
+    if (staffFilter === 'staff' && !u.is_staff) continue;
+    if (staffFilter === 'public' && u.is_staff) continue;
+
     const pts = p.points_awarded || 0;
 
     let row = agg.get(u.id);
@@ -103,6 +135,7 @@ async function buildWeeklyWinners(weekStart: string, weekEnd: string, topN: numb
         account_number: u.account_number,
         phone_number: u.phone_number,
         social_handles: u.social_handles || null,
+        is_staff: !!u.is_staff,
         week_points: 0,
         exact_scorelines: 0,
         correct_predictions: 0,
@@ -153,15 +186,19 @@ Deno.serve(async (req: Request) => {
 
     if (route === "weekly") {
       const topN = Math.min(200, Math.max(1, Number(body.top_n) || 25));
-      const { start, end } = weekBounds(body.week_of);
-      const { winners, match_count } = await buildWeeklyWinners(start, end, topN);
+      const staffFilter = (body.filter || "public") as 'staff' | 'public' | 'all';
+      const anchor = await getWeekAnchor();
+      const { start, end, weekNumber } = weekBoundsFromAnchor(anchor, body.week_of);
+      const { winners, match_count } = await buildWeeklyWinners(start, end, topN, staffFilter);
       return new Response(
         JSON.stringify({
           success: true,
           week_start: start,
           week_end: end,
+          week_number: weekNumber,
           match_count,
           top_n: topN,
+          filter: staffFilter,
           winners,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -170,6 +207,9 @@ Deno.serve(async (req: Request) => {
 
     if (route === "all-weeks") {
       const topN = Math.min(50, Math.max(1, Number(body.top_n) || 10));
+      const staffFilter = (body.filter || "public") as 'staff' | 'public' | 'all';
+      const anchor = await getWeekAnchor();
+
       const { data: bounds } = await supabase
         .from("matches")
         .select("kickoff_at")
@@ -179,26 +219,34 @@ Deno.serve(async (req: Request) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      const first = new Date(bounds[0].kickoff_at);
       const last = new Date(bounds[bounds.length - 1].kickoff_at);
+      const now = new Date();
+      const endRef = last > now ? now : last;
+
       const weeks = [];
-      let cursor = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), first.getUTCDate() - first.getUTCDay()));
-      const lastEnd = new Date(Date.UTC(last.getUTCFullYear(), last.getUTCMonth(), last.getUTCDate() - last.getUTCDay() + 7));
-      while (cursor < lastEnd) {
-        const wStart = new Date(cursor);
-        const wEnd = new Date(cursor.getTime() + 7 * 86_400_000);
+      let weekIdx = 0;
+      const anchorMs = anchor.getTime();
+      const endMs = endRef.getTime();
+
+      while (true) {
+        const wStart = new Date(anchorMs + weekIdx * 7 * 86_400_000);
+        if (wStart.getTime() > endMs) break;
+        const wEnd = new Date(wStart.getTime() + 7 * 86_400_000);
         const { winners, match_count } = await buildWeeklyWinners(
-          wStart.toISOString(), wEnd.toISOString(), topN,
+          wStart.toISOString(), wEnd.toISOString(), topN, staffFilter,
         );
-        weeks.push({
-          week_start: wStart.toISOString(),
-          week_end: wEnd.toISOString(),
-          match_count,
-          winners,
-        });
-        cursor = wEnd;
+        if (match_count > 0) {
+          weeks.push({
+            week_number: weekIdx + 1,
+            week_start: wStart.toISOString(),
+            week_end: wEnd.toISOString(),
+            match_count,
+            winners,
+          });
+        }
+        weekIdx++;
       }
-      return new Response(JSON.stringify({ success: true, weeks }), {
+      return new Response(JSON.stringify({ success: true, filter: staffFilter, weeks }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

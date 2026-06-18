@@ -41,23 +41,8 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Verify admin has active session
-    const { data: session } = await supabase
-      .from("admin_sessions")
-      .select("admin_email")
-      .eq("admin_email", admin_email.trim().toLowerCase())
-      .gt("expires_at", new Date().toISOString())
-      .maybeSingle();
-
-    if (!session) {
-      return new Response(JSON.stringify({ error: "No active admin session" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     // Only allow known fields
-    const allowedFields = ["predictions_enabled", "leaderboard_enabled", "team_picking_enabled", "campaign_name"];
+    const allowedFields = ["predictions_enabled", "leaderboard_enabled", "team_picking_enabled", "campaign_name", "week_start_date"];
     const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() };
 
     for (const [key, value] of Object.entries(fields)) {

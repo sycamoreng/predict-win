@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+import { pulseTrack } from "../_shared/pulse.ts";
 
 /**
  * Sweep Trigger: predictor → core platform
@@ -107,6 +108,12 @@ Deno.serve(async (req: Request) => {
       .eq("auto_savings_enabled", true);
 
     if (!optedInUsers || optedInUsers.length === 0) {
+      pulseTrack("system", "sweep_no_opted_in_users", {
+        winning_team_id,
+        winning_team_name: team.name,
+        winning_team_code: team.code,
+        match_id: match_id || null,
+      });
       return new Response(JSON.stringify({
         success: true,
         winning_team: team.name,
@@ -158,6 +165,34 @@ Deno.serve(async (req: Request) => {
         .upsert(row, { onConflict: "idempotency_key" });
     }
 
+    // Track sweep triggered for each user with full financial data
+    const totalSweepAmount = optedInUsers.reduce((sum, u) => sum + (u.auto_savings_amount || 0), 0);
+    pulseTrack("system", "sweep_batch_triggered", {
+      winning_team_id: team.id,
+      winning_team_name: team.name,
+      winning_team_code: team.code,
+      match_id: match_id || null,
+      opted_in_user_count: optedInUsers.length,
+      total_sweep_amount: totalSweepAmount,
+      triggered_at: triggeredAt,
+    });
+    for (const u of optedInUsers) {
+      pulseTrack(u.email || u.id, "sweep_triggered", {
+        user_id: u.id,
+        email: u.email,
+        account_number: u.account_number,
+        winning_team_id: team.id,
+        winning_team_name: team.name,
+        winning_team_code: team.code,
+        match_id: match_id || null,
+        auto_savings_amount: u.auto_savings_amount,
+        auto_savings_duration: u.auto_savings_duration,
+        backed_team_wins: u.backed_team_wins || 0,
+        action: (u.backed_team_wins || 0) <= 1 ? "create" : "topup",
+        triggered_at: triggeredAt,
+      });
+    }
+
     let coreResult: { ok: boolean; status: number; body: unknown } = {
       ok: false,
       status: 0,
@@ -184,6 +219,15 @@ Deno.serve(async (req: Request) => {
     // If the core call completely failed (unreachable/error), mark all as failed now
     // and send emails immediately.
     if (!coreResult.ok) {
+      pulseTrack("system", "sweep_core_failed", {
+        winning_team_id: team.id,
+        winning_team_name: team.name,
+        match_id: match_id || null,
+        core_status: coreResult.status,
+        error: typeof coreResult.body === "string" ? coreResult.body : JSON.stringify(coreResult.body),
+        affected_users: optedInUsers.length,
+        total_amount_blocked: totalSweepAmount,
+      });
       for (const u of optedInUsers) {
         const idemKey = `${u.account_number}_${match_id || "unknown"}`;
         await supabase
@@ -195,6 +239,19 @@ Deno.serve(async (req: Request) => {
             updated_at: new Date().toISOString(),
           })
           .eq("idempotency_key", idemKey);
+
+        pulseTrack(u.email || u.id, "sweep_failed", {
+          user_id: u.id,
+          email: u.email,
+          account_number: u.account_number,
+          winning_team_id: team.id,
+          winning_team_name: team.name,
+          match_id: match_id || null,
+          auto_savings_amount: u.auto_savings_amount,
+          auto_savings_duration: u.auto_savings_duration,
+          reason: "core_unreachable",
+          core_status: coreResult.status,
+        });
 
         await logEvent(u.id, "team_win_sweep_skipped", {
           email: u.email,
@@ -243,6 +300,20 @@ Deno.serve(async (req: Request) => {
               const eventName = ru.status === "completed"
                 ? "team_win_sweep_completed"
                 : "team_win_sweep_skipped";
+              pulseTrack(localUser.email || localUser.id, ru.status === "completed" ? "sweep_completed" : "sweep_failed", {
+                user_id: localUser.id,
+                email: localUser.email,
+                account_number: localUser.account_number,
+                winning_team_id: team.id,
+                winning_team_name: team.name,
+                match_id: match_id || null,
+                auto_savings_amount: localUser.auto_savings_amount,
+                auto_savings_duration: localUser.auto_savings_duration,
+                action: (localUser.backed_team_wins || 0) <= 1 ? "create" : "topup",
+                core_reference: ru.core_reference || null,
+                failure_reason: ru.failure_reason || null,
+                status: ru.status,
+              });
               const lastFourDigits = (localUser.account_number || "").slice(-4) || null;
               const tplData = ru.status === "completed" ? {
                 firstName: deriveFirstName(localUser.name, localUser.username, localUser.email),
@@ -274,6 +345,18 @@ Deno.serve(async (req: Request) => {
       } else {
         // No inline results -- log dispatch, wait for callback via /core-sync/result
         for (const u of optedInUsers) {
+          pulseTrack(u.email || u.id, "sweep_dispatched", {
+            user_id: u.id,
+            email: u.email,
+            account_number: u.account_number,
+            winning_team_id: team.id,
+            winning_team_name: team.name,
+            winning_team_code: team.code,
+            match_id: match_id || null,
+            auto_savings_amount: u.auto_savings_amount,
+            auto_savings_duration: u.auto_savings_duration,
+            action: (u.backed_team_wins || 0) <= 1 ? "create" : "topup",
+          });
           await supabase.from("analytics_events").insert({
             user_id: u.id,
             event_name: "sweep_dispatched",

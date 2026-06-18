@@ -2,7 +2,7 @@
 definePageMeta({ middleware: 'auth' })
 
 const supabase = useSupabase()
-const { user } = useAuth()
+const { user, trackPulseEvent } = useAuth()
 
 type FilterMode = 'all' | 'day' | 'week'
 const filterMode = ref<FilterMode>('all')
@@ -89,7 +89,10 @@ const loadPredictions = async () => {
   loading.value = false
 }
 
-onMounted(loadPredictions)
+onMounted(() => {
+  loadPredictions()
+  trackPulseEvent('history_viewed')
+})
 
 const formatDate = (iso: string) => {
   const d = new Date(iso)

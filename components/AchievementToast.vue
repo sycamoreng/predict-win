@@ -2,6 +2,7 @@
 import type { Achievement } from '~/composables/useAchievements'
 
 const { latestUnshown, dismiss } = useAchievements()
+const { user } = useAuth()
 const showShare = ref(false)
 const currentAchievement = ref<Achievement | null>(null)
 const visible = ref(false)
@@ -29,6 +30,17 @@ const onShareClose = () => {
   showShare.value = false
   onDismiss()
 }
+
+const achievementImageProps = computed(() => {
+  if (!currentAchievement.value) return undefined
+  return {
+    variant: 'achievement' as const,
+    username: user.value?.username || user.value?.email?.split('@')[0] || 'player',
+    achievementTitle: currentAchievement.value.title,
+    achievementIcon: currentAchievement.value.icon,
+    achievementDescription: currentAchievement.value.description,
+  }
+})
 </script>
 
 <template>
@@ -74,6 +86,7 @@ const onShareClose = () => {
     <ShareModal
       v-if="showShare && currentAchievement"
       :text="currentAchievement.shareText"
+      :image-card-props="achievementImageProps"
       :title="currentAchievement.title"
       @close="onShareClose"
     />

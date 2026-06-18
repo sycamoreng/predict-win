@@ -1,4 +1,7 @@
 <script setup lang="ts">
+const { trackPulseEvent } = useAuth()
+onMounted(() => trackPulseEvent('faq_viewed'))
+
 const sections = [
   {
     title: 'Account Setup & The New Sycamore Account Number',

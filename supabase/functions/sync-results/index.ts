@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+import { pulseTrack } from "../_shared/pulse.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -373,6 +374,26 @@ async function rescoreMatch(matchId: string) {
       predictLink: `${APP_BASE_URL}/predict`,
     });
 
+    pulseTrack(u?.email || p.user_id, pts > 0 ? "prediction_scored_correct" : "prediction_scored_incorrect", {
+      user_id: p.user_id,
+      email: u?.email || null,
+      match_id: match.id,
+      match: `${(match.home_team as any).code}-${(match.away_team as any).code}`,
+      team_a: homeTeam,
+      team_b: awayTeam,
+      actual_home_score: match.home_score,
+      actual_away_score: match.away_score,
+      predicted_home_score: p.predicted_home_score,
+      predicted_away_score: p.predicted_away_score,
+      predicted_winner_team_id: p.predicted_winner_team_id,
+      predicted_first_to_score_team_id: p.predicted_first_to_score_team_id,
+      match_result_points: matchResultPoints,
+      first_goalscorer_points: firstGoalscorerPoints,
+      exact_scoreline_points: exactScorelinePoints,
+      total_points_earned: pts,
+      backed_team_id: u?.backed_team_id || null,
+    });
+
     // In-app notification
     const notifTitle = pts > 0
       ? `+${pts} points! ${homeTeam} ${actualScore} ${awayTeam}`
@@ -407,6 +428,17 @@ async function rescoreMatch(matchId: string) {
         .from("synced_users")
         .update({ backed_team_wins: (b.backed_team_wins || 0) + 1, updated_at: new Date().toISOString() })
         .eq("id", b.id);
+
+      pulseTrack(b.email || b.id, "backed_team_won", {
+        user_id: b.id,
+        email: b.email,
+        match_id: match.id,
+        match: `${(match.home_team as any).code}-${(match.away_team as any).code}`,
+        winning_team_id: winnerId,
+        winning_team_name: winnerName,
+        score: `${match.home_score}-${match.away_score}`,
+        backed_team_wins: (b.backed_team_wins || 0) + 1,
+      });
 
       queueEvent(b.id, "team_won", {
         email: b.email,
@@ -1045,6 +1077,16 @@ Deno.serve(async (req: Request) => {
     const isCron = isServiceRoleRequest(req) || (body.action === "update-scores" && !email);
     if (isCron) {
       const { updated, skipped, finished_fixtures } = await syncResults(league, season);
+      if (updated.length > 0) {
+        pulseTrack("system", "results_synced_cron", {
+          league,
+          season,
+          finished_fixtures,
+          matches_updated: updated.length,
+          matches_skipped: skipped.length,
+          updated_matches: updated,
+        });
+      }
       return new Response(
         JSON.stringify({ success: true, cron: true, finished_fixtures, updated_count: updated.length, updated, skipped }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },

@@ -33,6 +33,7 @@ const load = async () => {
 
 onMounted(() => {
   load()
+  trackPulseEvent('team_page_viewed')
   if (isGuest.value) {
     showGuestModal.value = true
   } else if (needsUsername.value) {

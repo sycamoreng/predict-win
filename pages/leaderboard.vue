@@ -143,6 +143,19 @@ const rankShareText = computed(() => {
   return `I'm ranked #${myRank.value} with ${pts} points ${label} on the Sycamore Predictor League! Can you beat me?\n\n#SycamorePredictor #WorldCup2026`
 })
 
+const rankImageProps = computed(() => {
+  if (!myRank.value || !user.value) return undefined
+  const pts = mode.value === 'week' ? myWeekPoints.value : user.value.total_points
+  const label = mode.value === 'week' ? `Week ${weekNumber.value} leaderboard` : 'Overall leaderboard'
+  return {
+    variant: 'rank' as const,
+    username: user.value.username || user.value.email?.split('@')[0] || 'player',
+    rankPosition: myRank.value,
+    rankPoints: pts,
+    rankLabel: label,
+  }
+})
+
 const switchTab = (tab: 'public' | 'staff') => {
   activeTab.value = tab
   trackPulseEvent('leaderboard_tab_switched', { tab })
@@ -212,7 +225,7 @@ onMounted(() => {
           <div>
             <h1 class="text-3xl font-extrabold text-ink-900">Leaderboard</h1>
             <p class="mt-1 text-ink-500">
-              {{ mode === 'week' ? 'Weekly standings — resets every Sunday.' : 'All-time standings — counts towards the grand prize.' }}
+              {{ mode === 'week' ? 'Weekly standings — resets every week.' : 'All-time standings — counts towards the grand prize.' }}
             </p>
           </div>
           <div v-if="user" class="card px-4 py-3 flex items-center gap-4">
@@ -292,7 +305,7 @@ onMounted(() => {
           </div>
           <h3 class="font-bold text-sky-800 text-lg">Fresh week, fresh start!</h3>
           <p class="text-sm text-sky-600 mt-1 max-w-md mx-auto">
-            Last week's winners have been paid out. The leaderboard resets every Sunday -- make your predictions to climb this week's rankings.
+            A new week has started! Make your predictions to climb this week's rankings.
           </p>
           <NuxtLink to="/predict" class="btn-primary px-6 py-2.5 text-sm inline-block mt-4">
             Make predictions
@@ -382,6 +395,7 @@ onMounted(() => {
     <ShareModal
       v-if="showShareRank"
       :text="rankShareText"
+      :image-card-props="rankImageProps"
       title="My Leaderboard Rank"
       @close="showShareRank = false"
     />

@@ -72,7 +72,7 @@ interface NormalisedRecord {
   email: string;
   name: string;
   phone_number: string;
-  account_number: string;
+  account_number: string | null;
   active_customer_flag: boolean;
   is_account_valid: boolean;
   qualifying_transactions_count: number;
@@ -90,7 +90,6 @@ function validate(rec: InboundRecord): { ok: true; row: NormalisedRecord } | { o
   const account = (rec.account_number || "").trim();
 
   if (!email || !EMAIL_RE.test(email)) return { ok: false, reason: "invalid_email" };
-  if (!account) return { ok: false, reason: "missing_account_number" };
 
   const flag = rec.active_customer_flag ?? false;
   const txCount = Number.isFinite(rec.qualifying_transactions_count)
@@ -104,9 +103,9 @@ function validate(rec: InboundRecord): { ok: true; row: NormalisedRecord } | { o
       email,
       name: name || email.split("@")[0],
       phone_number: phone,
-      account_number: account,
+      account_number: account || null,
       active_customer_flag: !!flag,
-      is_account_valid: NUBAN_RE.test(account),
+      is_account_valid: account ? NUBAN_RE.test(account) : false,
       qualifying_transactions_count: txCount,
       core_user_id: coreUserId,
     },

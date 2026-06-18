@@ -18,6 +18,7 @@ const error = ref('')
 const usernameError = ref('')
 
 onMounted(() => {
+  trackPulseEvent('settings_viewed')
   if (user.value) {
     username.value = user.value.username || ''
     const handles = user.value.social_handles || {}

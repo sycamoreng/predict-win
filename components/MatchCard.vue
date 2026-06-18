@@ -93,6 +93,23 @@ const shareText = computed(() => {
   return parts.join('\n')
 })
 
+const predictionImageProps = computed(() => {
+  const winnerName = winner.value === props.match.home_team_id
+    ? props.match.home_team.name
+    : winner.value === props.match.away_team_id
+      ? props.match.away_team.name
+      : winner.value === 'draw' ? 'draw' : undefined
+
+  return {
+    variant: 'prediction' as const,
+    username: user.value?.username || user.value?.email?.split('@')[0] || 'player',
+    homeTeam: props.match.home_team,
+    awayTeam: props.match.away_team,
+    predictedScore: wantsExactScore.value ? { home: homeScore.value, away: awayScore.value } : undefined,
+    predictedWinner: wantsWinner.value ? winnerName : undefined,
+  }
+})
+
 const LOCK_MS = 3 * 60 * 60 * 1000
 
 const lockTime = computed(() => new Date(props.match.kickoff_at).getTime() - LOCK_MS)
@@ -497,6 +514,7 @@ const save = async () => {
     <ShareModal
       v-if="showShare"
       :text="shareText"
+      :image-card-props="predictionImageProps"
       title="My World Cup Prediction"
       @close="showShare = false"
     />

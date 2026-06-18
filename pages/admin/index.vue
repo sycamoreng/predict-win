@@ -57,7 +57,7 @@ const executeConfirm = async () => {
 }
 
 // --- Campaign Config ---
-const campaignConfig = ref<{ predictions_enabled: boolean; leaderboard_enabled: boolean; team_picking_enabled: boolean; campaign_name: string } | null>(null)
+const campaignConfig = ref<{ predictions_enabled: boolean; leaderboard_enabled: boolean; team_picking_enabled: boolean; campaign_name: string; week_start_date: string } | null>(null)
 const campaignLoading = ref(false)
 
 const loadCampaignConfig = async () => {
@@ -97,6 +97,20 @@ const updateCampaignName = async () => {
     })
   } catch (err: any) {
     error.value = `Failed to update campaign name: ${err.message}`
+  }
+  campaignLoading.value = false
+}
+
+const updateWeekStartDate = async () => {
+  if (!campaignConfig.value) return
+  campaignLoading.value = true
+  try {
+    await call('campaign-config-update', {
+      admin_email: admin.value!.email,
+      fields: { week_start_date: campaignConfig.value.week_start_date },
+    })
+  } catch (err: any) {
+    error.value = `Failed to update week start date: ${err.message}`
   }
   campaignLoading.value = false
 }
@@ -306,6 +320,7 @@ const payoutWeeks = ref<any[]>([])
 const payoutSingle = ref<any | null>(null)
 const payoutWeekOf = ref('')
 const payoutTopN = ref(10)
+const payoutFilter = ref<'public' | 'staff' | 'all'>('public')
 
 const fetchAllWeeks = async () => {
   if (!admin.value) return
@@ -316,6 +331,7 @@ const fetchAllWeeks = async () => {
     const res = await call('payouts/all-weeks', {
       email: admin.value.email,
       top_n: payoutTopN.value,
+      filter: payoutFilter.value,
     })
     payoutWeeks.value = res.weeks || []
   } catch (e) {
@@ -335,6 +351,7 @@ const fetchSingleWeek = async () => {
       email: admin.value.email,
       week_of: payoutWeekOf.value || undefined,
       top_n: payoutTopN.value,
+      filter: payoutFilter.value,
     })
     payoutSingle.value = res
   } catch (e) {
@@ -621,6 +638,7 @@ const reportData = ref<{
   activeCustomers: number
   usersWithTeam: number
   savingsEnabled: number
+  totalSavingsAmount: number
   totalPredictions: number
   matchesCompleted: number
   matchesScheduled: number
@@ -667,6 +685,12 @@ const loadReports = async () => {
     if (from) savingsQuery = savingsQuery.gte('created_at', from)
     if (to) savingsQuery = savingsQuery.lte('created_at', to)
     const { count: savingsEnabled } = await savingsQuery
+
+    let savingsAmountQuery = supabase.from('synced_users').select('auto_savings_amount').eq('auto_savings_enabled', true).not('auto_savings_amount', 'is', null)
+    if (from) savingsAmountQuery = savingsAmountQuery.gte('created_at', from)
+    if (to) savingsAmountQuery = savingsAmountQuery.lte('created_at', to)
+    const { data: savingsRows } = await savingsAmountQuery
+    const totalSavingsAmount = (savingsRows || []).reduce((sum, r) => sum + (r.auto_savings_amount || 0), 0)
 
     let predsQuery = supabase.from('predictions').select('*', { count: 'exact', head: true })
     if (from) predsQuery = predsQuery.gte('created_at', from)
@@ -732,6 +756,7 @@ const loadReports = async () => {
       activeCustomers: activeCustomers || 0,
       usersWithTeam: usersWithTeam || 0,
       savingsEnabled: savingsEnabled || 0,
+      totalSavingsAmount,
       totalPredictions: totalPredictions || 0,
       matchesCompleted: matchesCompleted || 0,
       matchesScheduled: matchesScheduled || 0,
@@ -1009,6 +1034,28 @@ watch(activeTab, (tab) => {
               </button>
             </div>
           </div>
+
+          <div class="card p-5 space-y-4">
+            <div>
+              <h3 class="font-bold text-ink-900">Week start date</h3>
+              <p class="text-sm text-ink-500">Defines when Week 1 begins. All weekly boundaries (leaderboard, payouts) are calculated from this date in 7-day intervals.</p>
+            </div>
+            <div class="flex gap-3">
+              <input
+                v-model="campaignConfig.week_start_date"
+                type="date"
+                class="input !py-2 w-48"
+              />
+              <button
+                @click="updateWeekStartDate"
+                :disabled="campaignLoading"
+                class="btn-primary !py-2 !px-4 text-sm"
+              >
+                {{ campaignLoading ? 'Saving...' : 'Save' }}
+              </button>
+            </div>
+            <p class="text-xs text-ink-400">Current: Week 1 starts {{ campaignConfig.week_start_date }}. Weeks run for 7 days each.</p>
+          </div>
         </template>
       </div>
 
@@ -1280,7 +1327,7 @@ watch(activeTab, (tab) => {
         <div class="card p-5 space-y-4">
           <div>
             <h2 class="font-bold text-ink-900">Weekly payout export</h2>
-            <p class="text-sm text-ink-500">Aggregate weekly winners (Sun-Sat) for the bulk-payout system.</p>
+            <p class="text-sm text-ink-500">Aggregate weekly winners based on the configured week start date.</p>
           </div>
           <div class="flex flex-wrap items-end gap-3">
             <div>
@@ -1290,6 +1337,14 @@ watch(activeTab, (tab) => {
             <div>
               <label class="label !mb-1">Top N</label>
               <input v-model.number="payoutTopN" type="number" min="1" max="200" class="input !py-2 w-24" />
+            </div>
+            <div>
+              <label class="label !mb-1">Filter</label>
+              <select v-model="payoutFilter" class="input !py-2 w-32">
+                <option value="public">Public</option>
+                <option value="staff">Staff</option>
+                <option value="all">All</option>
+              </select>
             </div>
             <button @click="fetchSingleWeek" :disabled="payoutLoading" class="btn-primary !py-2 !px-4 text-sm">
               {{ payoutLoading ? 'Loading...' : 'Build single week' }}
@@ -1491,6 +1546,10 @@ watch(activeTab, (tab) => {
             <div class="card p-4 text-center">
               <div class="text-2xl font-extrabold text-teal-600">{{ reportData.savingsEnabled }}</div>
               <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Auto-savings on</div>
+            </div>
+            <div class="card p-4 text-center">
+              <div class="text-2xl font-extrabold text-teal-700">&#8358;{{ reportData.totalSavingsAmount.toLocaleString() }}</div>
+              <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Total savings amount</div>
             </div>
             <div class="card p-4 text-center">
               <div class="text-2xl font-extrabold text-mint-700">{{ reportData.matchesCompleted }}</div>
