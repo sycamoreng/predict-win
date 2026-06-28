@@ -11,6 +11,19 @@ const predictions = ref<Record<string, any>>({})
 const loading = ref(true)
 const view = ref<'today' | 'week' | 'past'>('today')
 
+// Knockout test mode via query param
+const route = useRoute()
+const forceKnockout = computed(() => route.query.knockout_test === '1')
+
+// Knockout popup (shown once per session)
+const KNOCKOUT_STAGES = new Set(['round_of_16', 'round_of_32', 'quarter_final', 'semi_final', 'third_place', 'final'])
+const knockoutPopupDismissed = ref(false)
+const hasKnockoutMatch = computed(() => {
+  if (forceKnockout.value) return true
+  return matches.value.some(m => KNOCKOUT_STAGES.has(m.stage) && m.status !== 'completed')
+})
+const showKnockoutPopup = computed(() => hasKnockoutMatch.value && !knockoutPopupDismissed.value && !loading.value)
+
 // Celebratory banners
 const recentWins = ref<Array<{ id: string; title: string; body: string; type: string; metadata: any }>>([])
 const dismissedBanners = ref<Set<string>>(new Set())
@@ -259,6 +272,7 @@ const copyAccountNumber = async () => {
         :key="m.id"
         :match="m"
         :prediction="predictions[m.id]"
+        :force-knockout="forceKnockout"
         @saved="onSaved"
       />
     </div>
@@ -283,6 +297,75 @@ const copyAccountNumber = async () => {
         </a>
       </div>
     </div>
+
+    <!-- Knockout landing popup -->
+    <Teleport to="body">
+      <Transition
+        enter-active-class="transition duration-300 ease-out"
+        enter-from-class="opacity-0"
+        enter-to-class="opacity-100"
+        leave-active-class="transition duration-200 ease-in"
+        leave-from-class="opacity-100"
+        leave-to-class="opacity-0"
+      >
+        <div v-if="showKnockoutPopup" class="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4" @click.self="knockoutPopupDismissed = true">
+          <div class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+          <Transition
+            enter-active-class="transition duration-400 ease-out delay-100"
+            enter-from-class="opacity-0 translate-y-8 scale-95"
+            enter-to-class="opacity-100 translate-y-0 scale-100"
+            leave-active-class="transition duration-200 ease-in"
+            leave-from-class="opacity-100 translate-y-0 scale-100"
+            leave-to-class="opacity-0 translate-y-4 scale-95"
+          >
+            <div v-if="showKnockoutPopup" class="relative w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl bg-white">
+              <div class="absolute top-3 right-3 z-10">
+                <button @click="knockoutPopupDismissed = true" class="w-8 h-8 rounded-full bg-ink-100 flex items-center justify-center hover:bg-ink-200 transition">
+                  <svg class="w-4 h-4 text-ink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+              </div>
+
+              <div class="px-6 pt-10 pb-6 text-center">
+                <div class="flex items-center justify-center gap-2 mb-6">
+                  <span class="w-10 h-10 rounded-full bg-ink-100 flex items-center justify-center text-sm font-bold text-ink-500">90'</span>
+                  <svg class="w-4 h-4 text-ink-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                  <span class="w-10 h-10 rounded-full bg-coral-50 flex items-center justify-center text-sm font-bold text-coral-600">120'</span>
+                  <svg class="w-4 h-4 text-ink-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                  <span class="w-10 h-10 rounded-full bg-coral-100 flex items-center justify-center text-sm font-bold text-coral-700">PK</span>
+                </div>
+
+                <h2 class="text-xl font-extrabold text-ink-900">Knockouts are here</h2>
+                <p class="text-sm text-ink-500 mt-2 leading-relaxed max-w-xs mx-auto">
+                  Now you can predict <span class="font-semibold text-ink-700">how the match ends</span> -- full time, extra time, or penalties. Bolder predictions earn more points.
+                </p>
+
+                <div class="flex items-center justify-center gap-6 mt-6 mb-6">
+                  <div class="text-center">
+                    <div class="text-xs text-ink-400 uppercase font-medium">Safe</div>
+                    <div class="text-lg font-extrabold text-ink-500 mt-0.5">15</div>
+                  </div>
+                  <div class="w-px h-8 bg-ink-200"></div>
+                  <div class="text-center">
+                    <div class="text-xs text-coral-600 uppercase font-medium">Bold</div>
+                    <div class="text-lg font-extrabold text-coral-600 mt-0.5">20</div>
+                  </div>
+                  <div class="w-px h-8 bg-ink-200"></div>
+                  <div class="text-center">
+                    <div class="text-xs text-coral-700 uppercase font-medium">Bravest</div>
+                    <div class="text-lg font-extrabold text-coral-700 mt-0.5">25</div>
+                  </div>
+                </div>
+
+                <button @click="knockoutPopupDismissed = true" class="w-full btn-primary py-3.5 text-sm">
+                  Got it, let me predict
+                </button>
+                <p class="text-xs text-ink-400 mt-3">You won't see this again.</p>
+              </div>
+            </div>
+          </Transition>
+        </div>
+      </Transition>
+    </Teleport>
 
   </div>
 </template>

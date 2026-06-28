@@ -157,8 +157,121 @@ const getImgUrl = (filename: string) => `/${filename}`
             <p class="text-sm text-ink-600">Leaderboard resets in <strong>weekly cycles</strong>. Top predictors win each week.</p>
           </div>
           <div class="flex items-start gap-2.5">
-            <svg class="w-4 h-4 text-sky-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
-            <p class="text-sm text-ink-600">Exact scoreline predictions also count as <strong>tiebreakers</strong> between players with equal points.</p>
+            <svg class="w-4 h-4 text-sky-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"/></svg>
+            <p class="text-sm text-ink-600">Tiebreakers determine ranking when players are on equal points. See below.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tiebreaker Rules -->
+      <div class="rounded-[16px] bg-gradient-to-br from-[#fffbeb] to-[#fef3c7] border border-[#fde68a] p-5 sm:p-6 mt-4">
+        <div class="flex items-center gap-2.5 mb-4">
+          <div class="w-8 h-8 rounded-lg bg-[#f59e0b]/10 grid place-items-center">
+            <svg class="w-4.5 h-4.5 text-[#d97706]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"/></svg>
+          </div>
+          <h4 class="font-bold text-[#92400e] text-base">Tiebreaker Rules</h4>
+        </div>
+        <p class="text-sm text-[#92400e]/80 mb-4">When two or more players have the same total points, their positions are decided by:</p>
+        <ol class="space-y-2.5">
+          <li class="flex items-start gap-3">
+            <span class="w-6 h-6 rounded-full bg-[#f59e0b]/15 grid place-items-center text-xs font-bold text-[#b45309] shrink-0">1</span>
+            <div>
+              <p class="text-sm font-semibold text-[#78350f]">Most exact scorelines</p>
+              <p class="text-xs text-[#92400e]/70">Correctly predicting the exact final score (e.g. 2-1) is the hardest, so it counts first.</p>
+            </div>
+          </li>
+          <li class="flex items-start gap-3">
+            <span class="w-6 h-6 rounded-full bg-[#f59e0b]/15 grid place-items-center text-xs font-bold text-[#b45309] shrink-0">2</span>
+            <div>
+              <p class="text-sm font-semibold text-[#78350f]">Most correct predictions</p>
+              <p class="text-xs text-[#92400e]/70">Total number of predictions that earned any points (winner, first scorer, or scoreline).</p>
+            </div>
+          </li>
+          <li class="flex items-start gap-3">
+            <span class="w-6 h-6 rounded-full bg-[#f59e0b]/15 grid place-items-center text-xs font-bold text-[#b45309] shrink-0">3</span>
+            <div>
+              <p class="text-sm font-semibold text-[#78350f]">Most matches predicted</p>
+              <p class="text-xs text-[#92400e]/70">Players who predicted more matches are rewarded for consistent participation.</p>
+            </div>
+          </li>
+          <li class="flex items-start gap-3">
+            <span class="w-6 h-6 rounded-full bg-[#f59e0b]/15 grid place-items-center text-xs font-bold text-[#b45309] shrink-0">4</span>
+            <div>
+              <p class="text-sm font-semibold text-[#78350f]">Shared position</p>
+              <p class="text-xs text-[#92400e]/70">If players are still equal after all criteria above, they share the same rank.</p>
+            </div>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- Knockout Stage -->
+    <section class="relative bg-white rounded-[28px] p-6 sm:p-10 border border-[#e8edf2] shadow-[0_2px_8px_rgba(0,0,0,0.03),0_12px_32px_rgba(0,0,0,0.04)] overflow-hidden">
+      <div class="absolute top-0 right-0 w-[200px] h-[200px] rounded-full bg-coral-50/60 blur-[80px] pointer-events-none"></div>
+
+      <div class="relative text-center mb-8">
+        <div class="inline-flex rounded-full border border-coral-200 bg-coral-50 px-4 py-2 text-sm font-semibold text-coral-700 shadow-[0_1px_3px_rgba(0,0,0,0.04)] mb-4">
+          Knockout Stage
+        </div>
+        <h2 class="text-2xl sm:text-3xl font-extrabold text-ink-900">Bolder calls. Bigger rewards.</h2>
+        <p class="mt-2 text-ink-500 max-w-xl mx-auto">From the Round of 32 onwards, predict how the match ends -- the bolder your call, the more points you earn.</p>
+      </div>
+
+      <!-- Finish type cards -->
+      <div class="grid gap-4 sm:grid-cols-3 mb-8">
+        <div class="relative rounded-[20px] p-6 border border-[#e8edf2] bg-gradient-to-br from-white to-[#f8fafc] overflow-hidden">
+          <div class="absolute top-4 right-4 w-12 h-12 rounded-full bg-ink-100 grid place-items-center">
+            <span class="text-lg font-extrabold text-ink-600">15</span>
+          </div>
+          <div class="w-10 h-10 rounded-xl bg-ink-100 grid place-items-center mb-3">
+            <span class="text-sm font-extrabold text-ink-500">90'</span>
+          </div>
+          <h3 class="text-lg font-extrabold text-ink-900">Full Time</h3>
+          <p class="mt-2 text-sm text-ink-500 leading-relaxed">A team wins within 90 minutes. The standard outcome -- worth <strong class="text-ink-700">15 points</strong>.</p>
+        </div>
+
+        <div class="relative rounded-[20px] p-6 border border-coral-100 bg-gradient-to-br from-white to-coral-50/50 overflow-hidden">
+          <div class="absolute top-4 right-4 w-12 h-12 rounded-full bg-coral-100 grid place-items-center">
+            <span class="text-lg font-extrabold text-coral-600">20</span>
+          </div>
+          <div class="w-10 h-10 rounded-xl bg-coral-100 grid place-items-center mb-3">
+            <span class="text-sm font-extrabold text-coral-600">120'</span>
+          </div>
+          <h3 class="text-lg font-extrabold text-ink-900">Extra Time</h3>
+          <p class="mt-2 text-sm text-ink-500 leading-relaxed">Predict a winner after extra time. A bolder call, earning <strong class="text-coral-600">20 points</strong>.</p>
+        </div>
+
+        <div class="relative rounded-[20px] p-6 border border-coral-200 bg-gradient-to-br from-white to-coral-100/50 overflow-hidden">
+          <div class="absolute top-4 right-4 w-12 h-12 rounded-full bg-coral-200 grid place-items-center">
+            <span class="text-lg font-extrabold text-coral-700">25</span>
+          </div>
+          <div class="w-10 h-10 rounded-xl bg-coral-200 grid place-items-center mb-3">
+            <span class="text-sm font-extrabold text-coral-700">PK</span>
+          </div>
+          <h3 class="text-lg font-extrabold text-ink-900">Penalties</h3>
+          <p class="mt-2 text-sm text-ink-500 leading-relaxed">The bravest call -- predict a penalty shootout and earn <strong class="text-coral-700">25 points</strong>.</p>
+        </div>
+      </div>
+
+      <!-- How knockout predictions work -->
+      <div class="rounded-[16px] bg-[#f8fafc] border border-[#e8edf2] p-5 sm:p-6">
+        <h4 class="font-bold text-ink-900 mb-3">How knockout predictions work</h4>
+        <div class="grid sm:grid-cols-2 gap-x-8 gap-y-2.5">
+          <div class="flex items-start gap-2.5">
+            <svg class="w-4 h-4 text-coral-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
+            <p class="text-sm text-ink-600">No draws in knockouts -- <strong>someone must win</strong>.</p>
+          </div>
+          <div class="flex items-start gap-2.5">
+            <svg class="w-4 h-4 text-coral-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <p class="text-sm text-ink-600">Pick how the match ends <strong>before</strong> setting the score.</p>
+          </div>
+          <div class="flex items-start gap-2.5">
+            <svg class="w-4 h-4 text-coral-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <p class="text-sm text-ink-600">Penalties = <strong>level score</strong> at the end (e.g. 1-1, decided on pens).</p>
+          </div>
+          <div class="flex items-start gap-2.5">
+            <svg class="w-4 h-4 text-coral-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
+            <p class="text-sm text-ink-600">Winner + scoreline + finish type = <strong>up to 30 pts</strong> per knockout match.</p>
           </div>
         </div>
       </div>

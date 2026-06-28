@@ -418,6 +418,17 @@ async function rescoreMatch(matchId: string) {
       .maybeSingle();
     const winnerName = winningTeam?.name || winningTeam?.code || "Your Team";
 
+    // Fire sweep-trigger immediately (fire-and-forget) before the heavy backer loop
+    const sweepUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/sweep-trigger`;
+    fetch(sweepUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+      },
+      body: JSON.stringify({ winning_team_id: winnerId, match_id: match.id }),
+    }).catch(() => {});
+
     const { data: backers } = await supabase
       .from("synced_users")
       .select("id, email, name, username, backed_team_wins")
@@ -464,19 +475,6 @@ async function rescoreMatch(matchId: string) {
         metadata: { match_id: match.id, team_id: winnerId, score: `${match.home_score}-${match.away_score}` },
       });
     }
-
-    // Trigger auto-savings sweep for opted-in users
-    try {
-      const sweepUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/sweep-trigger`;
-      await fetch(sweepUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-        },
-        body: JSON.stringify({ winning_team_id: winnerId, match_id: match.id }),
-      });
-    } catch { /* sweep is best-effort */ }
   }
 
   const userIds = [...new Set(preds.map((p) => p.user_id))];
@@ -633,9 +631,18 @@ async function syncResults(league: number, season: number) {
       .filter((e) => e.type === "Goal")
       .sort((a, b) => a.time.elapsed - b.time.elapsed);
     if (goals.length > 0) {
-      const scorerName = normalize(goals[0].team.name);
-      if (scorerName === normalize(dbMatch.home_team.name)) firstToScore = dbMatch.home_team_id;
-      else if (scorerName === normalize(dbMatch.away_team.name)) firstToScore = dbMatch.away_team_id;
+      const goalTeam = goals[0].team as any;
+      const goalTeamApiId = goalTeam.id as number | undefined;
+      const scorerName = normalize(goalTeam.name);
+      if (goalTeamApiId && goalTeamApiId === dbMatch.home_team.api_football_id) {
+        firstToScore = dbMatch.home_team_id;
+      } else if (goalTeamApiId && goalTeamApiId === dbMatch.away_team.api_football_id) {
+        firstToScore = dbMatch.away_team_id;
+      } else if (scorerName === normalize(dbMatch.home_team.name)) {
+        firstToScore = dbMatch.home_team_id;
+      } else if (scorerName === normalize(dbMatch.away_team.name)) {
+        firstToScore = dbMatch.away_team_id;
+      }
     }
 
     const { error: updateErr } = await supabase
@@ -683,13 +690,22 @@ async function ensureTruthEvents(matchId: string, apiFixtureId: number | null) {
     if (goals.length > 0) {
       const { data: m } = await supabase
         .from("matches")
-        .select("home_team_id, away_team_id, home_team:teams!matches_home_team_id_fkey(name), away_team:teams!matches_away_team_id_fkey(name)")
+        .select("home_team_id, away_team_id, home_team:teams!matches_home_team_id_fkey(name, api_football_id), away_team:teams!matches_away_team_id_fkey(name, api_football_id)")
         .eq("id", matchId)
         .maybeSingle();
       if (m) {
-        const scorerName = normalize(goals[0].team.name);
-        if (scorerName === normalize((m.home_team as any).name)) firstScorer = m.home_team_id;
-        else if (scorerName === normalize((m.away_team as any).name)) firstScorer = m.away_team_id;
+        const goalTeam = goals[0].team as any;
+        const goalTeamApiId = goalTeam.id as number | undefined;
+        const scorerName = normalize(goalTeam.name);
+        if (goalTeamApiId && goalTeamApiId === (m.home_team as any).api_football_id) {
+          firstScorer = m.home_team_id;
+        } else if (goalTeamApiId && goalTeamApiId === (m.away_team as any).api_football_id) {
+          firstScorer = m.away_team_id;
+        } else if (scorerName === normalize((m.home_team as any).name)) {
+          firstScorer = m.home_team_id;
+        } else if (scorerName === normalize((m.away_team as any).name)) {
+          firstScorer = m.away_team_id;
+        }
       }
     }
 

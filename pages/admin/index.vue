@@ -10,7 +10,7 @@ const canManageFixtures = computed(() => hasPermission('manage_fixtures'))
 const canViewPayouts = computed(() => hasPermission('view_payouts'))
 const canManageAdmins = computed(() => hasPermission('manage_admins'))
 
-type Tab = 'campaign' | 'fixtures' | 'results' | 'payouts' | 'teams' | 'reports' | 'admins'
+type Tab = 'campaign' | 'fixtures' | 'results' | 'payouts' | 'teams' | 'users' | 'reports' | 'admins'
 
 const tabs = computed<Array<{ key: Tab; label: string; show: boolean }>>(() => [
   { key: 'campaign', label: 'Campaign', show: true },
@@ -18,6 +18,7 @@ const tabs = computed<Array<{ key: Tab; label: string; show: boolean }>>(() => [
   { key: 'results', label: 'Results', show: canManageResults.value },
   { key: 'payouts', label: 'Payouts', show: canViewPayouts.value },
   { key: 'teams', label: 'Teams', show: canManageResults.value },
+  { key: 'users', label: 'Users', show: true },
   { key: 'reports', label: 'Reports', show: true },
   { key: 'admins', label: 'Admins', show: canManageAdmins.value },
 ])
@@ -882,12 +883,129 @@ const exportGuestCsv = async () => {
   }
 }
 
+// --- Users Export ---
+type UserFilter = 'all' | 'with_account' | 'no_account' | 'active_customers' | 'backed_team' | 'auto_savings'
+const userFilterOptions: Array<{ value: UserFilter; label: string }> = [
+  { value: 'all', label: 'All users' },
+  { value: 'with_account', label: 'With account number' },
+  { value: 'no_account', label: 'No account number (guests)' },
+  { value: 'active_customers', label: 'Active customers' },
+  { value: 'backed_team', label: 'Backed a team' },
+  { value: 'auto_savings', label: 'Auto-savings enabled' },
+]
+const userFilter = ref<UserFilter>('all')
+const userDateFrom = ref('')
+const userDateTo = ref('')
+const userSearchEmail = ref('')
+const usersExporting = ref(false)
+const usersExportFormat = ref<'csv' | 'json'>('csv')
+const usersPreview = ref<any[]>([])
+const usersPreviewLoading = ref(false)
+const usersPreviewTotal = ref(0)
+
+const buildUserQuery = (select: string, opts?: { countOnly?: boolean }) => {
+  let query = opts?.countOnly
+    ? supabase.from('synced_users').select(select, { count: 'exact', head: true })
+    : supabase.from('synced_users').select(select)
+
+  if (userFilter.value === 'with_account') query = query.not('account_number', 'is', null).neq('account_number', '')
+  else if (userFilter.value === 'no_account') query = query.or('account_number.is.null,account_number.eq.')
+  else if (userFilter.value === 'active_customers') query = query.eq('active_customer_flag', true)
+  else if (userFilter.value === 'backed_team') query = query.not('backed_team_id', 'is', null)
+  else if (userFilter.value === 'auto_savings') query = query.eq('auto_savings_enabled', true)
+
+  if (userDateFrom.value) query = query.gte('created_at', userDateFrom.value)
+  if (userDateTo.value) query = query.lte('created_at', userDateTo.value + 'T23:59:59')
+  if (userSearchEmail.value.trim()) query = query.ilike('email', `%${userSearchEmail.value.trim()}%`)
+
+  return query
+}
+
+const loadUsersPreview = async () => {
+  usersPreviewLoading.value = true
+  try {
+    const { count } = await buildUserQuery('*', { countOnly: true })
+    usersPreviewTotal.value = count || 0
+
+    const { data } = await buildUserQuery('id, email, name, username, account_number, phone_number, active_customer_flag, total_points, backed_team_id, auto_savings_enabled, created_at')
+      .order('created_at', { ascending: false })
+      .limit(20)
+    usersPreview.value = data || []
+  } finally {
+    usersPreviewLoading.value = false
+  }
+}
+
+const fetchAllFilteredUsers = async () => {
+  const PAGE_SIZE = 1000
+  let allUsers: any[] = []
+  let offset = 0
+  let hasMore = true
+
+  while (hasMore) {
+    const { data } = await buildUserQuery('*')
+      .order('created_at', { ascending: false })
+      .range(offset, offset + PAGE_SIZE - 1)
+    if (!data || data.length === 0) { hasMore = false; break }
+    allUsers = allUsers.concat(data)
+    if (data.length < PAGE_SIZE) hasMore = false
+    else offset += PAGE_SIZE
+  }
+  return allUsers
+}
+
+const getExportFilename = (ext: string) => {
+  const filterLabel = userFilter.value === 'all' ? 'all' : userFilter.value.replace(/_/g, '-')
+  const dateSuffix = userDateFrom.value || userDateTo.value
+    ? `-${userDateFrom.value || 'start'}-to-${userDateTo.value || 'now'}`
+    : ''
+  return `users-${filterLabel}${dateSuffix}.${ext}`
+}
+
+const exportUsers = async () => {
+  usersExporting.value = true
+  try {
+    const allUsers = await fetchAllFilteredUsers()
+    if (!allUsers.length) return
+
+    let blob: Blob
+    let filename: string
+
+    if (usersExportFormat.value === 'json') {
+      blob = new Blob([JSON.stringify(allUsers, null, 2)], { type: 'application/json;charset=utf-8;' })
+      filename = getExportFilename('json')
+    } else {
+      const keys = Object.keys(allUsers[0])
+      const csv = [keys.join(',')]
+        .concat(allUsers.map((row) => keys.map((k) => {
+          const val = row[k]
+          if (val === null || val === undefined) return ''
+          if (typeof val === 'object') return csvCell(JSON.stringify(val))
+          return csvCell(val)
+        }).join(',')))
+        .join('\n')
+      blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+      filename = getExportFilename('csv')
+    }
+
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  } finally {
+    usersExporting.value = false
+  }
+}
+
 // Load tab data on tab change
 watch(activeTab, (tab) => {
   if (tab === 'campaign' && !campaignConfig.value) loadCampaignConfig()
   if (tab === 'teams' && !teamsList.value.length) loadTeams()
   if (tab === 'admins' && !adminsList.value.length) loadAdmins()
   if (tab === 'reports' && !reportData.value) loadReports()
+  if (tab === 'users' && !usersPreview.value.length) loadUsersPreview()
 }, { immediate: true })
 </script>
 
@@ -1468,6 +1586,110 @@ watch(activeTab, (tab) => {
             </div>
           </div>
           <div v-else-if="!teamsLoading" class="text-sm text-ink-400">No teams found.</div>
+        </div>
+      </div>
+
+      <!-- REPORTS TAB -->
+      <!-- USERS TAB -->
+      <div v-if="activeTab === 'users'" class="space-y-5">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <h2 class="text-xl font-extrabold text-ink-900">User export</h2>
+            <p class="text-sm text-ink-500">Filter and export users as CSV.</p>
+          </div>
+        </div>
+
+        <div class="card p-5 space-y-4">
+          <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div>
+              <label class="label !mb-1">Filter</label>
+              <select v-model="userFilter" class="input !py-2">
+                <option v-for="o in userFilterOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+              </select>
+            </div>
+            <div>
+              <label class="label !mb-1">From</label>
+              <input v-model="userDateFrom" type="date" class="input !py-2" />
+            </div>
+            <div>
+              <label class="label !mb-1">To</label>
+              <input v-model="userDateTo" type="date" class="input !py-2" />
+            </div>
+            <div>
+              <label class="label !mb-1">Email search</label>
+              <input v-model="userSearchEmail" type="text" class="input !py-2" placeholder="e.g. @gmail.com" />
+            </div>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-3">
+            <button @click="loadUsersPreview" :disabled="usersPreviewLoading" class="btn-primary !py-2 !px-4 text-sm">
+              {{ usersPreviewLoading ? 'Loading...' : 'Apply filters' }}
+            </button>
+            <button
+              v-if="userDateFrom || userDateTo || userSearchEmail || userFilter !== 'all'"
+              @click="userFilter = 'all'; userDateFrom = ''; userDateTo = ''; userSearchEmail = ''; loadUsersPreview()"
+              class="pill bg-ink-100 text-ink-700 hover:bg-ink-200 text-xs"
+            >
+              Clear all
+            </button>
+            <div class="ml-auto flex items-center gap-3">
+              <span v-if="usersPreviewTotal > 0" class="text-sm text-ink-600 font-semibold tabular-nums">
+                {{ usersPreviewTotal.toLocaleString() }} user{{ usersPreviewTotal !== 1 ? 's' : '' }} matched
+              </span>
+              <select v-model="usersExportFormat" class="input !py-1.5 !px-2 !text-xs !w-auto !rounded-lg">
+                <option value="csv">CSV</option>
+                <option value="json">JSON</option>
+              </select>
+              <button
+                @click="exportUsers"
+                :disabled="usersExporting || usersPreviewTotal === 0"
+                class="pill bg-mint-50 text-mint-700 hover:bg-mint-100 text-xs font-bold disabled:opacity-40"
+              >
+                <span class="flex items-center gap-1.5">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                  {{ usersExporting ? 'Exporting...' : `Export ${usersExportFormat.toUpperCase()}` }}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="usersPreviewLoading && !usersPreview.length" class="card h-48 animate-pulse bg-ink-100/40"></div>
+
+        <div v-else-if="usersPreview.length" class="card p-0 overflow-hidden">
+          <div class="px-4 py-3 bg-ink-50 border-b border-ink-100 flex items-center justify-between">
+            <span class="text-xs font-semibold text-ink-500 uppercase tracking-wider">Preview (first 20 of {{ usersPreviewTotal.toLocaleString() }})</span>
+          </div>
+          <div class="overflow-auto max-h-[28rem]">
+            <table class="w-full text-sm">
+              <thead class="bg-ink-50 text-ink-500 text-xs uppercase sticky top-0">
+                <tr>
+                  <th class="text-left px-3 py-2">Email</th>
+                  <th class="text-left px-3 py-2">Name</th>
+                  <th class="text-left px-3 py-2">Account</th>
+                  <th class="text-center px-3 py-2">Active</th>
+                  <th class="text-right px-3 py-2">Points</th>
+                  <th class="text-left px-3 py-2">Joined</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-ink-100">
+                <tr v-for="u in usersPreview" :key="u.id" class="hover:bg-ink-50/50">
+                  <td class="px-3 py-2 font-mono text-xs text-ink-700 max-w-[200px] truncate">{{ u.email }}</td>
+                  <td class="px-3 py-2 text-xs font-semibold text-ink-900 max-w-[140px] truncate">{{ u.name || u.username || '-' }}</td>
+                  <td class="px-3 py-2 font-mono text-xs text-ink-600">{{ u.account_number || '-' }}</td>
+                  <td class="px-3 py-2 text-center">
+                    <span :class="u.active_customer_flag ? 'text-mint-600' : 'text-ink-300'" class="text-xs font-bold">{{ u.active_customer_flag ? 'Yes' : 'No' }}</span>
+                  </td>
+                  <td class="px-3 py-2 text-right font-bold tabular-nums text-ink-900">{{ u.total_points }}</td>
+                  <td class="px-3 py-2 text-xs text-ink-500">{{ u.created_at?.slice(0, 10) || '-' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div v-else-if="!usersPreviewLoading && usersPreviewTotal === 0" class="card p-8 text-center">
+          <p class="text-sm text-ink-500">No users match the current filters.</p>
         </div>
       </div>
 

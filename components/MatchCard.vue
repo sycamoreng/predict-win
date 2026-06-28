@@ -26,6 +26,7 @@ interface Prediction {
   predicted_first_to_score_team_id: string | null
   predicted_home_score: number
   predicted_away_score: number
+  predicted_finish_type?: string | null
   points_awarded: number
   scored: boolean
   wants_winner_pick: boolean
@@ -33,9 +34,14 @@ interface Prediction {
   wants_exact_score_pick: boolean
 }
 
+type FinishType = 'FT' | 'AET' | 'PEN'
+
+const KNOCKOUT_STAGES = new Set(['round_of_16', 'round_of_32', 'quarter_final', 'semi_final', 'third_place', 'final'])
+
 const props = defineProps<{
   match: Match
   prediction?: Prediction | null
+  forceKnockout?: boolean
 }>()
 
 const emit = defineEmits<{ saved: [Prediction] }>()
@@ -58,6 +64,10 @@ const wantsExactScore = ref<boolean>(props.prediction?.wants_exact_score_pick ??
 const hasTouchedWinner = ref(!!props.prediction?.wants_winner_pick)
 const hasTouchedFirstScorer = ref(!!props.prediction?.wants_first_to_score_pick)
 const hasTouchedScore = ref(!!props.prediction?.wants_exact_score_pick)
+
+// Knockout mode
+const isKnockout = computed(() => props.forceKnockout || KNOCKOUT_STAGES.has(props.match.stage))
+const finishType = ref<FinishType | null>((props.prediction?.predicted_finish_type as FinishType) ?? null)
 
 const saving = ref(false)
 const error = ref('')
@@ -152,9 +162,15 @@ const awayWinSelected = computed(() => winner.value === props.match.away_team_id
 const drawSelected = computed(() => winner.value === 'draw')
 
 const deriveWinnerFromScore = () => {
-  if (homeScore.value > awayScore.value) winner.value = props.match.home_team_id
-  else if (awayScore.value > homeScore.value) winner.value = props.match.away_team_id
-  else winner.value = 'draw'
+  if (isKnockout.value) {
+    if (homeScore.value > awayScore.value) winner.value = props.match.home_team_id
+    else if (awayScore.value > homeScore.value) winner.value = props.match.away_team_id
+    // PEN: scores are level, winner stays as-is (penalty winner)
+  } else {
+    if (homeScore.value > awayScore.value) winner.value = props.match.home_team_id
+    else if (awayScore.value > homeScore.value) winner.value = props.match.away_team_id
+    else winner.value = 'draw'
+  }
 }
 
 const reconcileFirstScorer = () => {
@@ -190,12 +206,12 @@ const pickWinner = (which: 'home' | 'draw' | 'away') => {
   hasTouchedWinner.value = true
   if (which === 'home') {
     winner.value = props.match.home_team_id
-    if (wantsExactScore.value && homeScore.value <= awayScore.value) {
+    if (wantsExactScore.value && (finishType.value === 'FT' || finishType.value === 'AET') && homeScore.value <= awayScore.value) {
       homeScore.value = Math.min(15, awayScore.value + 1)
     }
   } else if (which === 'away') {
     winner.value = props.match.away_team_id
-    if (wantsExactScore.value && awayScore.value <= homeScore.value) {
+    if (wantsExactScore.value && (finishType.value === 'FT' || finishType.value === 'AET') && awayScore.value <= homeScore.value) {
       awayScore.value = Math.min(15, homeScore.value + 1)
     }
   } else {
@@ -210,9 +226,55 @@ const adjScore = (side: 'home' | 'away', delta: number) => {
   hasTouchedScore.value = true
   if (side === 'home') homeScore.value = Math.max(0, Math.min(15, homeScore.value + delta))
   else awayScore.value = Math.max(0, Math.min(15, awayScore.value + delta))
+
+  // Knockout: enforce score constraints
+  if (isKnockout.value && finishType.value === 'PEN') {
+    if (side === 'home') awayScore.value = homeScore.value
+    else homeScore.value = awayScore.value
+  }
+
   if (wantsWinner.value) deriveWinnerFromScore()
   reconcileFirstScorer()
 }
+
+// Knockout: pick finish type
+const pickFinishType = (ft: FinishType) => {
+  finishType.value = ft
+  if (ft === 'PEN') {
+    const maxScore = Math.max(homeScore.value, awayScore.value)
+    homeScore.value = maxScore
+    awayScore.value = maxScore
+    hasTouchedScore.value = true
+  } else if (ft === 'FT' || ft === 'AET') {
+    if (hasTouchedScore.value && homeScore.value === awayScore.value) {
+      if (winner.value === props.match.home_team_id) {
+        homeScore.value = awayScore.value + 1
+      } else if (winner.value === props.match.away_team_id) {
+        awayScore.value = homeScore.value + 1
+      } else {
+        homeScore.value = awayScore.value + 1
+      }
+    }
+  }
+}
+
+const knockoutScoreValid = computed(() => {
+  if (!isKnockout.value || !finishType.value || !hasTouchedScore.value) return true
+  if (finishType.value === 'FT' || finishType.value === 'AET') {
+    return homeScore.value !== awayScore.value
+  }
+  if (finishType.value === 'PEN') {
+    return homeScore.value === awayScore.value
+  }
+  return true
+})
+
+const knockoutScoreLabel = computed(() => {
+  if (!finishType.value) return '+15 pts'
+  if (finishType.value === 'FT') return '+15 pts'
+  if (finishType.value === 'AET') return '+20 pts'
+  return '+25 pts'
+})
 
 const anyEnabled = computed(() => wantsWinner.value || wantsFirstToScore.value || wantsExactScore.value)
 
@@ -221,6 +283,11 @@ const canSubmit = computed(() => {
   if (wantsWinner.value && !hasTouchedWinner.value) return false
   if (wantsFirstToScore.value && !hasTouchedFirstScorer.value) return false
   if (wantsExactScore.value && !hasTouchedScore.value) return false
+  // Knockout: must pick finish type and score must be valid
+  if (isKnockout.value && wantsExactScore.value) {
+    if (!finishType.value) return false
+    if (!knockoutScoreValid.value) return false
+  }
   return true
 })
 
@@ -250,6 +317,7 @@ const save = async () => {
       wants_winner_pick: wantsWinner.value,
       wants_first_to_score_pick: wantsFirstToScore.value,
       wants_exact_score_pick: wantsExactScore.value,
+      predicted_finish_type: isKnockout.value && wantsExactScore.value ? finishType.value : null,
     })
     justSaved.value = true
     trackPulseEvent('prediction_saved', {
@@ -277,6 +345,7 @@ const save = async () => {
       predicted_first_to_score_team_id: wantsFirstToScore.value ? firstToScore.value : null,
       predicted_home_score: homeScore.value,
       predicted_away_score: awayScore.value,
+      predicted_finish_type: isKnockout.value && wantsExactScore.value ? finishType.value : null,
       points_awarded: 0,
       scored: false,
       wants_winner_pick: wantsWinner.value,
@@ -338,7 +407,8 @@ const save = async () => {
           </span>
           <span class="text-xs font-semibold text-sky-600">+5 pts</span>
         </label>
-        <div :class="['grid grid-cols-3 gap-2 transition-opacity', wantsWinner ? '' : 'opacity-40 pointer-events-none']">
+        <!-- Group stage: 3-col with Draw -->
+        <div v-if="!isKnockout" :class="['grid grid-cols-3 gap-2 transition-opacity', wantsWinner ? '' : 'opacity-40 pointer-events-none']">
           <button
             type="button"
             :disabled="winnerDisabled"
@@ -376,6 +446,36 @@ const save = async () => {
             {{ match.away_team.code }}
           </button>
         </div>
+        <!-- Knockout: 2-col, no Draw -->
+        <div v-else :class="['grid grid-cols-2 gap-2 transition-opacity', wantsWinner ? '' : 'opacity-40 pointer-events-none']">
+          <button
+            type="button"
+            :disabled="winnerDisabled"
+            @click="pickWinner('home')"
+            :class="[
+              'rounded-xl border-2 px-3 py-3 text-sm font-bold transition',
+              homeWinSelected && wantsWinner ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-ink-100 hover:border-ink-200 text-ink-700',
+              winnerDisabled && 'opacity-60 cursor-not-allowed',
+            ]"
+          >
+            {{ match.home_team.flag_emoji }} {{ match.home_team.code }}
+          </button>
+          <button
+            type="button"
+            :disabled="winnerDisabled"
+            @click="pickWinner('away')"
+            :class="[
+              'rounded-xl border-2 px-3 py-3 text-sm font-bold transition',
+              awayWinSelected && wantsWinner ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-ink-100 hover:border-ink-200 text-ink-700',
+              winnerDisabled && 'opacity-60 cursor-not-allowed',
+            ]"
+          >
+            {{ match.away_team.flag_emoji }} {{ match.away_team.code }}
+          </button>
+        </div>
+        <p v-if="isKnockout && wantsWinner && !hasTouchedWinner" class="mt-2 text-xs text-ink-400">
+          Someone must advance — pick who wins.
+        </p>
       </div>
 
       <div :class="['rounded-2xl p-4 transition', wantsFirstToScore ? 'bg-white' : 'bg-ink-50/60']">
@@ -436,49 +536,113 @@ const save = async () => {
             />
             <span class="font-bold text-ink-900 text-sm">Exact scoreline</span>
           </span>
-          <span class="text-xs font-semibold text-coral-600">+15 pts</span>
+          <span class="text-xs font-semibold text-coral-600">{{ isKnockout ? knockoutScoreLabel : '+15 pts' }}</span>
         </label>
-        <div :class="['grid grid-cols-2 gap-3 transition-opacity', wantsExactScore ? '' : 'opacity-40 pointer-events-none']">
-          <div class="rounded-xl bg-ink-50 p-3 flex items-center justify-between gap-2">
-            <button
-              type="button"
-              :disabled="scoreDisabled"
-              @click="adjScore('home', -1)"
-              class="w-8 h-8 rounded-lg bg-white text-ink-600 font-bold hover:bg-ink-100 disabled:opacity-50"
-            >−</button>
-            <div class="flex-1 text-center">
-              <div class="text-xs text-ink-500 font-semibold">{{ match.home_team.code }}</div>
-              <div class="text-2xl font-extrabold text-ink-900">{{ hasTouchedScore ? homeScore : '–' }}</div>
+
+        <div :class="['transition-opacity', wantsExactScore ? '' : 'opacity-40 pointer-events-none']">
+          <!-- Knockout: finish type picker -->
+          <div v-if="isKnockout" class="mb-4">
+            <p class="text-xs font-medium text-ink-500 mb-2">How does the match end?</p>
+            <div class="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                :disabled="scoreDisabled"
+                @click="pickFinishType('FT')"
+                :class="[
+                  'rounded-xl border-2 px-2 py-2.5 text-xs font-bold transition text-center',
+                  finishType === 'FT' ? 'border-coral-500 bg-coral-50 text-coral-700' : 'border-ink-100 hover:border-ink-200 text-ink-700',
+                ]"
+              >
+                <span class="block text-base mb-0.5">90'</span>
+                Full Time
+              </button>
+              <button
+                type="button"
+                :disabled="scoreDisabled"
+                @click="pickFinishType('AET')"
+                :class="[
+                  'rounded-xl border-2 px-2 py-2.5 text-xs font-bold transition text-center',
+                  finishType === 'AET' ? 'border-coral-500 bg-coral-50 text-coral-700' : 'border-ink-100 hover:border-ink-200 text-ink-700',
+                ]"
+              >
+                <span class="block text-base mb-0.5">120'</span>
+                Extra Time
+              </button>
+              <button
+                type="button"
+                :disabled="scoreDisabled"
+                @click="pickFinishType('PEN')"
+                :class="[
+                  'rounded-xl border-2 px-2 py-2.5 text-xs font-bold transition text-center',
+                  finishType === 'PEN' ? 'border-coral-500 bg-coral-50 text-coral-700' : 'border-ink-100 hover:border-ink-200 text-ink-700',
+                ]"
+              >
+                <span class="block text-base mb-0.5">PK</span>
+                Penalties
+              </button>
             </div>
-            <button
-              type="button"
-              :disabled="scoreDisabled"
-              @click="adjScore('home', 1)"
-              class="w-8 h-8 rounded-lg bg-white text-ink-600 font-bold hover:bg-ink-100 disabled:opacity-50"
-            >+</button>
           </div>
-          <div class="rounded-xl bg-ink-50 p-3 flex items-center justify-between gap-2">
-            <button
-              type="button"
-              :disabled="scoreDisabled"
-              @click="adjScore('away', -1)"
-              class="w-8 h-8 rounded-lg bg-white text-ink-600 font-bold hover:bg-ink-100 disabled:opacity-50"
-            >−</button>
-            <div class="flex-1 text-center">
-              <div class="text-xs text-ink-500 font-semibold">{{ match.away_team.code }}</div>
-              <div class="text-2xl font-extrabold text-ink-900">{{ hasTouchedScore ? awayScore : '–' }}</div>
+
+          <!-- Score pickers (show always for group, after finish type for knockout) -->
+          <div v-if="!isKnockout || finishType" class="grid grid-cols-2 gap-3">
+            <div class="rounded-xl bg-ink-50 p-3 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                :disabled="scoreDisabled"
+                @click="adjScore('home', -1)"
+                class="w-8 h-8 rounded-lg bg-white text-ink-600 font-bold hover:bg-ink-100 disabled:opacity-50"
+              >-</button>
+              <div class="flex-1 text-center">
+                <div class="text-xs text-ink-500 font-semibold">{{ match.home_team.code }}</div>
+                <div class="text-2xl font-extrabold text-ink-900">{{ hasTouchedScore ? homeScore : '-' }}</div>
+              </div>
+              <button
+                type="button"
+                :disabled="scoreDisabled"
+                @click="adjScore('home', 1)"
+                class="w-8 h-8 rounded-lg bg-white text-ink-600 font-bold hover:bg-ink-100 disabled:opacity-50"
+              >+</button>
             </div>
-            <button
-              type="button"
-              :disabled="scoreDisabled"
-              @click="adjScore('away', 1)"
-              class="w-8 h-8 rounded-lg bg-white text-ink-600 font-bold hover:bg-ink-100 disabled:opacity-50"
-            >+</button>
+            <div class="rounded-xl bg-ink-50 p-3 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                :disabled="scoreDisabled"
+                @click="adjScore('away', -1)"
+                class="w-8 h-8 rounded-lg bg-white text-ink-600 font-bold hover:bg-ink-100 disabled:opacity-50"
+              >-</button>
+              <div class="flex-1 text-center">
+                <div class="text-xs text-ink-500 font-semibold">{{ match.away_team.code }}</div>
+                <div class="text-2xl font-extrabold text-ink-900">{{ hasTouchedScore ? awayScore : '-' }}</div>
+              </div>
+              <button
+                type="button"
+                :disabled="scoreDisabled"
+                @click="adjScore('away', 1)"
+                class="w-8 h-8 rounded-lg bg-white text-ink-600 font-bold hover:bg-ink-100 disabled:opacity-50"
+              >+</button>
+            </div>
           </div>
+
+          <!-- Knockout constraint hints -->
+          <p v-if="isKnockout && (finishType === 'FT' || finishType === 'AET') && hasTouchedScore && homeScore === awayScore" class="mt-2 text-xs text-coral-600">
+            {{ finishType === 'FT' ? 'Full Time' : 'Extra Time' }} means one team wins — score can't be level.
+          </p>
+          <p v-if="isKnockout && finishType === 'PEN' && wantsWinner && winner" class="mt-2 text-xs text-ink-500">
+            {{ winner === match.home_team_id ? match.home_team.name : match.away_team.name }} wins the shootout (your winner pick).
+          </p>
+          <p v-if="isKnockout && finishType === 'PEN' && wantsWinner && !winner" class="mt-2 text-xs text-coral-600">
+            Pick a winner above — they win the penalty shootout.
+          </p>
+
+          <!-- Group stage hints -->
+          <p v-if="!isKnockout && wantsExactScore && !hasTouchedScore" class="mt-2 text-xs text-ink-400">
+            Tap +/&minus; to set your predicted score.
+          </p>
+          <!-- Knockout: no finish type selected yet -->
+          <p v-if="isKnockout && !finishType && wantsExactScore" class="mt-2 text-xs text-ink-400">
+            Pick how you think the match ends, then set your score.
+          </p>
         </div>
-        <p v-if="wantsExactScore && !hasTouchedScore" class="mt-2 text-xs text-ink-400">
-          Tap +/&minus; to set your predicted score.
-        </p>
       </div>
 
       <p v-if="error" class="text-sm text-coral-600">{{ error }}</p>

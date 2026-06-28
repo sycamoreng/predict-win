@@ -25,6 +25,7 @@ const savingsError = ref('')
 
 const load = async () => {
   loading.value = true
+  await refreshUser()
   await loadCampaign()
   const { data } = await supabase.from('teams').select('*').order('name')
   teams.value = data || []

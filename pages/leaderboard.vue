@@ -2,7 +2,7 @@
 definePageMeta({ middleware: 'auth' })
 
 const supabase = useSupabase()
-const { user, isGuest, hasAccount, isStaff, trackPulseEvent } = useAuth()
+const { user, isGuest, hasAccount, isStaff, refreshUser, trackPulseEvent } = useAuth()
 const { config: campaign, load: loadCampaign } = useCampaign()
 
 type LeaderboardMode = 'week' | 'overall'
@@ -98,6 +98,7 @@ const loadStaffOverall = async () => {
 }
 
 const load = async () => {
+  await refreshUser()
   await loadCampaign()
   if (isGuest.value || !hasAccount.value || !campaign.value.leaderboard_enabled) {
     loading.value = false
@@ -119,7 +120,7 @@ const myRank = computed(() => {
   if (!user.value) return null
   const list = currentPlayers.value
   const idx = list.findIndex((p) => p.id === user.value!.id)
-  return idx >= 0 ? idx + 1 : null
+  return idx >= 0 ? displayRank(list, idx) : null
 })
 
 const myWeekPoints = computed(() => {
@@ -128,6 +129,36 @@ const myWeekPoints = computed(() => {
     || staffPlayers.value.find((p) => p.id === user.value!.id)
   return entry?.week_points || entry?.total_points || 0
 })
+
+const isStartOfTiedGroup = (list: any[], index: number) => {
+  if (index < 0 || index >= list.length) return false
+  const p = list[index]
+  if (p.total_points === 0) return false
+  const prev = index > 0 ? list[index - 1] : null
+  const next = index < list.length - 1 ? list[index + 1] : null
+  const hasTie = (prev && prev.total_points === p.total_points) || (next && next.total_points === p.total_points)
+  if (!hasTie) return false
+  return !prev || prev.total_points !== p.total_points
+}
+
+const getExacts = (p: any) => mode.value === 'week' ? (p.exact_scorelines || 0) : (p.exact_scorelines_count || 0)
+const getCorrects = (p: any) => mode.value === 'week' ? (p.correct_predictions || 0) : (p.correct_predictions_count || 0)
+const getMatchesPredicted = (p: any) => p.matches_predicted || 0
+
+const isFullyTied = (a: any, b: any) => {
+  if (a.total_points !== b.total_points) return false
+  if (getExacts(a) !== getExacts(b)) return false
+  if (getCorrects(a) !== getCorrects(b)) return false
+  if (mode.value === 'week' && getMatchesPredicted(a) !== getMatchesPredicted(b)) return false
+  return true
+}
+
+const displayRank = (list: any[], index: number) => {
+  for (let i = index - 1; i >= 0; i--) {
+    if (!isFullyTied(list[i], list[index])) return i + 2
+  }
+  return 1
+}
 
 const podiumColors = [
   'from-sun-300 to-sun-500',
@@ -347,42 +378,50 @@ onMounted(() => {
             <span class="text-xs text-ink-400">{{ currentPlayers.length }} players</span>
           </div>
           <ul class="divide-y divide-ink-100">
-            <li
-              v-for="(p, i) in currentPlayers"
-              :key="p.id"
-              :class="[
-                'flex items-center gap-4 px-4 sm:px-6 py-3 transition',
-                user && p.id === user.id ? 'bg-sky-50/60' : 'hover:bg-ink-50/50',
-              ]"
-            >
-              <div
+            <template v-for="(p, i) in currentPlayers" :key="p.id">
+              <li
+                v-if="isStartOfTiedGroup(currentPlayers, i)"
+                class="px-4 sm:px-6 py-1.5 bg-sun-50/60 border-b border-sun-100"
+              >
+                <span class="text-[11px] font-semibold uppercase tracking-wide text-sun-700">
+                  {{ p.total_points }} pts tied — ranked by exact scorelines, then correct predictions{{ mode === 'week' ? ', then matches predicted' : '' }}
+                </span>
+              </li>
+              <li
                 :class="[
-                  'w-9 h-9 rounded-lg grid place-items-center text-sm font-bold',
-                  i === 0 ? 'bg-sun-100 text-sun-800'
-                    : i === 1 ? 'bg-ink-100 text-ink-700'
-                    : i === 2 ? 'bg-coral-100 text-coral-700'
-                    : 'bg-ink-50 text-ink-500',
+                  'flex items-center gap-4 px-4 sm:px-6 py-3 transition',
+                  user && p.id === user.id ? 'bg-sky-50/60' : 'hover:bg-ink-50/50',
                 ]"
               >
-                {{ i + 1 }}
-              </div>
-              <div class="flex-1 min-w-0">
-                <div class="font-semibold text-ink-900 truncate lowercase">
-                  {{ displayUsername(p) }}
-                  <span v-if="user && p.id === user.id" class="ml-2 pill bg-sky-100 text-sky-700 text-[10px]">You</span>
+                <div
+                  :class="[
+                    'w-9 h-9 rounded-lg grid place-items-center text-sm font-bold',
+                    displayRank(currentPlayers, i) === 1 ? 'bg-sun-100 text-sun-800'
+                      : displayRank(currentPlayers, i) === 2 ? 'bg-ink-100 text-ink-700'
+                      : displayRank(currentPlayers, i) === 3 ? 'bg-coral-100 text-coral-700'
+                      : 'bg-ink-50 text-ink-500',
+                  ]"
+                >
+                  {{ displayRank(currentPlayers, i) }}
                 </div>
-                <div v-if="mode === 'week'" class="text-xs text-ink-500 truncate">
-                  {{ p.correct_predictions || 0 }} correct · {{ p.exact_scorelines || 0 }} exact
+                <div class="flex-1 min-w-0">
+                  <div class="font-semibold text-ink-900 truncate lowercase">
+                    {{ displayUsername(p) }}
+                    <span v-if="user && p.id === user.id" class="ml-2 pill bg-sky-100 text-sky-700 text-[10px]">You</span>
+                  </div>
+                  <div v-if="mode === 'week'" class="text-xs text-ink-500 truncate">
+                    {{ p.correct_predictions || 0 }} correct · {{ p.exact_scorelines || 0 }} exact
+                  </div>
+                  <div v-else class="text-xs text-ink-500 truncate">
+                    {{ p.correct_predictions_count || 0 }} correct · {{ p.exact_scorelines_count || 0 }} exact
+                  </div>
                 </div>
-                <div v-else class="text-xs text-ink-500 truncate">
-                  {{ p.correct_predictions_count || 0 }} correct · {{ p.exact_scorelines_count || 0 }} exact
+                <div class="font-extrabold text-ink-900 tabular-nums">
+                  {{ p.total_points }}
+                  <span class="text-xs font-semibold text-ink-400">pts</span>
                 </div>
-              </div>
-              <div class="font-extrabold text-ink-900 tabular-nums">
-                {{ p.total_points }}
-                <span class="text-xs font-semibold text-ink-400">pts</span>
-              </div>
-            </li>
+              </li>
+            </template>
           </ul>
         </div>
       </template>

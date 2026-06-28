@@ -126,11 +126,17 @@ async function eliminateGroupStageTeams() {
     .select("home_team_id, away_team_id")
     .in("stage", KNOCKOUT_STAGES);
 
+  // Safety: don't eliminate if knockout fixtures haven't been created yet
+  if (!knockoutMatches?.length) return;
+
   const advancingIds = new Set<string>();
   for (const m of knockoutMatches || []) {
     if (m.home_team_id) advancingIds.add(m.home_team_id);
     if (m.away_team_id) advancingIds.add(m.away_team_id);
   }
+
+  // Only eliminate if we have a reasonable number of advancing teams
+  if (advancingIds.size < 16) return;
 
   const { data: allTeams } = await supabase
     .from("teams")
@@ -249,6 +255,17 @@ async function rescoreMatch(matchId: string) {
       .maybeSingle();
     const winnerName = winningTeam?.name || winningTeam?.code || "Your Team";
 
+    // Fire sweep-trigger immediately (fire-and-forget) before the heavy backer loop
+    const sweepUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/sweep-trigger`;
+    fetch(sweepUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+      },
+      body: JSON.stringify({ winning_team_id: winnerId, match_id: match.id }),
+    }).catch(() => {});
+
     const { data: backers } = await supabase
       .from("synced_users")
       .select("id, email, name, username, backed_team_wins, auto_savings_enabled, auto_savings_amount")
@@ -278,19 +295,6 @@ async function rescoreMatch(matchId: string) {
         savingsLink: `${APP_BASE_URL}/settings`,
       });
     }
-
-    // Trigger auto-savings sweep for opted-in users
-    try {
-      const sweepUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/sweep-trigger`;
-      await fetch(sweepUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-        },
-        body: JSON.stringify({ winning_team_id: winnerId, match_id: match.id }),
-      });
-    } catch { /* sweep is best-effort */ }
   }
 
   const userIds = [...new Set(preds.map((p) => p.user_id))];
@@ -393,6 +397,7 @@ Deno.serve(async (req: Request) => {
         wants_winner_pick,
         wants_first_to_score_pick,
         wants_exact_score_pick,
+        predicted_finish_type,
       } = body;
 
       const wantsWinner = wants_winner_pick !== false;
@@ -468,6 +473,11 @@ Deno.serve(async (req: Request) => {
             : null))
         : null;
 
+      const validFinishTypes = new Set(["FT", "AET", "PEN"]);
+      const finishTypeVal = wantsExactScore && validFinishTypes.has(predicted_finish_type)
+        ? predicted_finish_type
+        : null;
+
       const payload = {
         user_id: user.id,
         match_id,
@@ -475,6 +485,7 @@ Deno.serve(async (req: Request) => {
         predicted_first_to_score_team_id: firstToScoreVal,
         predicted_home_score: homeScoreNum,
         predicted_away_score: awayScoreNum,
+        predicted_finish_type: finishTypeVal,
         wants_winner_pick: wantsWinner,
         wants_first_to_score_pick: wantsFirstToScore,
         wants_exact_score_pick: wantsExactScore,
