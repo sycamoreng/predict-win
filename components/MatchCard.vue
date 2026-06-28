@@ -583,6 +583,11 @@ const save = async () => {
             </div>
           </div>
 
+          <!-- Score context label for knockout -->
+          <p v-if="isKnockout && finishType" class="text-xs font-medium text-ink-500 mb-2">
+            {{ finishType === 'FT' ? 'Final score at full time:' : finishType === 'AET' ? 'Score after extra time:' : 'Score after extra time (must be a draw):' }}
+          </p>
+
           <!-- Score pickers (show always for group, after finish type for knockout) -->
           <div v-if="!isKnockout || finishType" class="grid grid-cols-2 gap-3">
             <div class="rounded-xl bg-ink-50 p-3 flex items-center justify-between gap-2">
@@ -624,15 +629,31 @@ const save = async () => {
           </div>
 
           <!-- Knockout constraint hints -->
-          <p v-if="isKnockout && (finishType === 'FT' || finishType === 'AET') && hasTouchedScore && homeScore === awayScore" class="mt-2 text-xs text-coral-600">
-            {{ finishType === 'FT' ? 'Full Time' : 'Extra Time' }} means one team wins — score can't be level.
+          <p v-if="isKnockout && (finishType === 'FT' || finishType === 'AET') && hasTouchedScore && homeScore === awayScore" class="mt-2 text-xs text-coral-600 flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.168 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
+            {{ finishType === 'FT' ? 'A Full Time finish means one team wins in 90 minutes. The score can\'t be level.' : 'Extra Time means a winner is decided in ET. The score after ET can\'t be level — that\'s penalties.' }}
           </p>
-          <p v-if="isKnockout && finishType === 'PEN' && wantsWinner && winner" class="mt-2 text-xs text-ink-500">
-            {{ winner === match.home_team_id ? match.home_team.name : match.away_team.name }} wins the shootout (your winner pick).
+          <div v-if="isKnockout && finishType === 'PEN' && wantsWinner && winner" class="mt-2 rounded-lg bg-ink-50 px-3 py-2">
+            <p class="text-xs text-ink-600">
+              <span class="font-semibold">{{ winner === match.home_team_id ? match.home_team.name : match.away_team.name }}</span> wins the shootout (same as your winner pick above).
+            </p>
+          </div>
+          <p v-if="isKnockout && finishType === 'PEN' && wantsWinner && !winner" class="mt-2 text-xs text-coral-600 flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.168 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
+            Pick a winner above — they'll be the penalty shootout winner.
           </p>
-          <p v-if="isKnockout && finishType === 'PEN' && wantsWinner && !winner" class="mt-2 text-xs text-coral-600">
-            Pick a winner above — they win the penalty shootout.
+          <p v-if="isKnockout && finishType === 'PEN' && !wantsWinner" class="mt-2 text-xs text-coral-600 flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.168 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
+            Enable "Winner" above to specify who wins on penalties.
           </p>
+
+          <!-- Bold prediction banner -->
+          <div v-if="isKnockout && finishType && hasTouchedScore" class="mt-3 rounded-xl bg-sun-50 border border-sun-200 px-4 py-3">
+            <p class="text-xs text-sun-800">
+              <span class="font-semibold">Bold prediction!</span>
+              {{ finishType === 'FT' ? 'You\'re predicting a decisive result in 90 minutes. The score must have a clear winner.' : finishType === 'AET' ? 'You\'re predicting the match goes to extra time where a winner is decided. Score after ET must have a clear winner.' : 'You\'re predicting the match stays level through extra time and goes to a penalty shootout. Your winner pick determines who wins on pens.' }}
+            </p>
+          </div>
 
           <!-- Group stage hints -->
           <p v-if="!isKnockout && wantsExactScore && !hasTouchedScore" class="mt-2 text-xs text-ink-400">
