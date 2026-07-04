@@ -42,7 +42,7 @@ Deno.serve(async (req: Request) => {
     }
 
     // Only allow known fields
-    const allowedFields = ["predictions_enabled", "leaderboard_enabled", "team_picking_enabled", "campaign_name", "week_start_date"];
+    const allowedFields = ["predictions_enabled", "leaderboard_enabled", "team_picking_enabled", "campaign_name", "week_start_date", "prediction_lock_minutes"];
     const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() };
 
     for (const [key, value] of Object.entries(fields)) {

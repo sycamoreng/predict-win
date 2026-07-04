@@ -68,10 +68,19 @@ watch(() => matchResult.finishType, (ft) => {
     }
   }
   if (ft === 'PEN') {
-    matchResult.ftHomeScore = matchResult.aetHomeScore
-    matchResult.ftAwayScore = matchResult.aetHomeScore
-    matchResult.aetHomeScore = matchResult.ftHomeScore
-    matchResult.aetAwayScore = matchResult.ftHomeScore
+    // For PEN: both FT and AET scores must be draws, but they can be different draws.
+    // Ensure FT is a draw without overwriting AET.
+    if (matchResult.ftHomeScore !== matchResult.ftAwayScore) {
+      const ftMax = Math.max(matchResult.ftHomeScore, matchResult.ftAwayScore)
+      matchResult.ftHomeScore = ftMax
+      matchResult.ftAwayScore = ftMax
+    }
+    // Ensure AET is a draw without overwriting FT.
+    if (matchResult.aetHomeScore !== matchResult.aetAwayScore) {
+      const aetMax = Math.max(matchResult.aetHomeScore, matchResult.aetAwayScore)
+      matchResult.aetHomeScore = aetMax
+      matchResult.aetAwayScore = aetMax
+    }
   }
 })
 

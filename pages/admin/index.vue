@@ -58,7 +58,7 @@ const executeConfirm = async () => {
 }
 
 // --- Campaign Config ---
-const campaignConfig = ref<{ predictions_enabled: boolean; leaderboard_enabled: boolean; team_picking_enabled: boolean; campaign_name: string; week_start_date: string } | null>(null)
+const campaignConfig = ref<{ predictions_enabled: boolean; leaderboard_enabled: boolean; team_picking_enabled: boolean; campaign_name: string; week_start_date: string; prediction_lock_minutes: number } | null>(null)
 const campaignLoading = ref(false)
 
 const loadCampaignConfig = async () => {
@@ -112,6 +112,20 @@ const updateWeekStartDate = async () => {
     })
   } catch (err: any) {
     error.value = `Failed to update week start date: ${err.message}`
+  }
+  campaignLoading.value = false
+}
+
+const updatePredictionLockMinutes = async () => {
+  if (!campaignConfig.value) return
+  campaignLoading.value = true
+  try {
+    await call('campaign-config-update', {
+      admin_email: admin.value!.email,
+      fields: { prediction_lock_minutes: campaignConfig.value.prediction_lock_minutes },
+    })
+  } catch (err: any) {
+    error.value = `Failed to update prediction lock window: ${err.message}`
   }
   campaignLoading.value = false
 }
@@ -231,6 +245,25 @@ const matches = ref<any[]>([])
 const loading = ref(true)
 const saving = ref<string | null>(null)
 const editStates = ref<Record<string, { home: number; away: number; first: string | null }>>({})
+const resultsStatusFilter = ref<'all' | 'scheduled' | 'completed' | 'postponed' | 'cancelled'>('all')
+const resultsSearch = ref('')
+
+const filteredMatches = computed(() => {
+  let list = matches.value
+  if (resultsStatusFilter.value !== 'all') {
+    list = list.filter((m) => m.status === resultsStatusFilter.value)
+  }
+  const q = resultsSearch.value.trim().toLowerCase()
+  if (q) {
+    list = list.filter((m) =>
+      m.home_team.name.toLowerCase().includes(q) ||
+      m.home_team.code.toLowerCase().includes(q) ||
+      m.away_team.name.toLowerCase().includes(q) ||
+      m.away_team.code.toLowerCase().includes(q)
+    )
+  }
+  return list
+})
 
 const loadMatches = async () => {
   loading.value = true
@@ -482,6 +515,25 @@ const exportAllWeeksCsv = () => {
 const teamsList = ref<any[]>([])
 const teamsLoading = ref(false)
 const teamsError = ref('')
+const teamsStatusFilter = ref<'all' | 'active' | 'eliminated'>('all')
+const teamsSearch = ref('')
+
+const filteredTeams = computed(() => {
+  let list = teamsList.value
+  if (teamsStatusFilter.value === 'active') {
+    list = list.filter((t) => !t.is_eliminated)
+  } else if (teamsStatusFilter.value === 'eliminated') {
+    list = list.filter((t) => t.is_eliminated)
+  }
+  const q = teamsSearch.value.trim().toLowerCase()
+  if (q) {
+    list = list.filter((t) =>
+      t.name?.toLowerCase().includes(q) ||
+      t.code?.toLowerCase().includes(q)
+    )
+  }
+  return list
+})
 
 const loadTeams = async () => {
   if (!admin.value) return
@@ -1174,6 +1226,32 @@ watch(activeTab, (tab) => {
             </div>
             <p class="text-xs text-ink-400">Current: Week 1 starts {{ campaignConfig.week_start_date }}. Weeks run for 7 days each.</p>
           </div>
+
+          <div class="card p-5 space-y-4">
+            <div>
+              <h3 class="font-bold text-ink-900">Prediction lock window</h3>
+              <p class="text-sm text-ink-500">How many minutes before kickoff predictions close. E.g. 60 = 1 hour before, 180 = 3 hours before.</p>
+            </div>
+            <div class="flex gap-3 items-center">
+              <input
+                v-model.number="campaignConfig.prediction_lock_minutes"
+                type="number"
+                min="0"
+                max="1440"
+                step="15"
+                class="input !py-2 w-32"
+              />
+              <span class="text-sm text-ink-500">minutes</span>
+              <button
+                @click="updatePredictionLockMinutes"
+                :disabled="campaignLoading"
+                class="btn-primary !py-2 !px-4 text-sm"
+              >
+                {{ campaignLoading ? 'Saving...' : 'Save' }}
+              </button>
+            </div>
+            <p class="text-xs text-ink-400">Currently set to {{ campaignConfig.prediction_lock_minutes }} min ({{ (campaignConfig.prediction_lock_minutes / 60).toFixed(1) }}h) before kickoff.</p>
+          </div>
         </template>
       </div>
 
@@ -1311,10 +1389,33 @@ watch(activeTab, (tab) => {
           </div>
         </div>
 
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="flex gap-1 bg-ink-50 rounded-lg p-1">
+            <button
+              v-for="opt in (['all', 'scheduled', 'completed', 'postponed', 'cancelled'] as const)"
+              :key="opt"
+              @click="resultsStatusFilter = opt"
+              :class="[
+                'px-3 py-1.5 text-xs font-semibold rounded-md transition',
+                resultsStatusFilter === opt ? 'bg-white text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-700',
+              ]"
+            >
+              {{ opt === 'all' ? 'All' : opt.charAt(0).toUpperCase() + opt.slice(1) }}
+            </button>
+          </div>
+          <input
+            v-model="resultsSearch"
+            type="text"
+            placeholder="Search by team..."
+            class="input !py-2 !px-3 text-sm w-52"
+          />
+          <span class="text-xs text-ink-400 ml-auto">{{ filteredMatches.length }} of {{ matches.length }} matches</span>
+        </div>
+
         <div v-if="loading" class="card h-72 animate-pulse bg-ink-100/40"></div>
 
         <div v-else class="space-y-3">
-          <div v-for="m in matches" :key="m.id" class="card p-5">
+          <div v-for="m in filteredMatches" :key="m.id" class="card p-5">
             <div class="flex flex-wrap items-center gap-4">
               <div class="flex items-center gap-3 flex-1 min-w-[260px]">
                 <div class="text-2xl">{{ m.home_team.flag_emoji }}</div>
@@ -1554,11 +1655,34 @@ watch(activeTab, (tab) => {
             </button>
           </div>
 
+          <div class="flex flex-wrap items-center gap-3">
+            <div class="flex gap-1 bg-ink-50 rounded-lg p-1">
+              <button
+                v-for="opt in (['all', 'active', 'eliminated'] as const)"
+                :key="opt"
+                @click="teamsStatusFilter = opt"
+                :class="[
+                  'px-3 py-1.5 text-xs font-semibold rounded-md transition',
+                  teamsStatusFilter === opt ? 'bg-white text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-700',
+                ]"
+              >
+                {{ opt.charAt(0).toUpperCase() + opt.slice(1) }}
+              </button>
+            </div>
+            <input
+              v-model="teamsSearch"
+              type="text"
+              placeholder="Search teams..."
+              class="input !py-2 !px-3 text-sm w-44"
+            />
+            <span class="text-xs text-ink-400 ml-auto">{{ filteredTeams.length }} of {{ teamsList.length }} teams</span>
+          </div>
+
           <p v-if="teamsError" class="text-sm text-coral-600">{{ teamsError }}</p>
 
-          <div v-if="teamsList.length" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+          <div v-if="filteredTeams.length" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
             <div
-              v-for="t in teamsList"
+              v-for="t in filteredTeams"
               :key="t.id"
               :class="[
                 'rounded-xl border p-3 flex items-center justify-between gap-2 transition',
@@ -1585,7 +1709,7 @@ watch(activeTab, (tab) => {
               </button>
             </div>
           </div>
-          <div v-else-if="!teamsLoading" class="text-sm text-ink-400">No teams found.</div>
+          <div v-else-if="!teamsLoading" class="text-sm text-ink-400">{{ teamsList.length ? 'No teams match your filter.' : 'No teams found.' }}</div>
         </div>
       </div>
 

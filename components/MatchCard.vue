@@ -48,6 +48,7 @@ const emit = defineEmits<{ saved: [Prediction] }>()
 
 const { user, trackPulseEvent } = useAuth()
 const { call } = useFunctions()
+const { config: campaignConfig } = useCampaign()
 
 const initialWinner = props.prediction
   ? (props.prediction.predicted_winner_team_id ?? 'draw')
@@ -120,9 +121,9 @@ const predictionImageProps = computed(() => {
   }
 })
 
-const LOCK_MS = 3 * 60 * 60 * 1000
+const lockMs = computed(() => (campaignConfig.value.prediction_lock_minutes ?? 60) * 60 * 1000)
 
-const lockTime = computed(() => new Date(props.match.kickoff_at).getTime() - LOCK_MS)
+const lockTime = computed(() => new Date(props.match.kickoff_at).getTime() - lockMs.value)
 const now = ref(Date.now())
 let timer: ReturnType<typeof setInterval> | null = null
 
@@ -177,8 +178,10 @@ const reconcileFirstScorer = () => {
   if (!wantsExactScore.value) return
   if (firstToScore.value === props.match.home_team_id && homeScore.value === 0) {
     firstToScore.value = null
+    hasTouchedFirstScorer.value = false
   } else if (firstToScore.value === props.match.away_team_id && awayScore.value === 0) {
     firstToScore.value = null
+    hasTouchedFirstScorer.value = false
   }
 }
 
@@ -648,10 +651,13 @@ const save = async () => {
           </p>
 
           <!-- Bold prediction banner -->
-          <div v-if="isKnockout && finishType && hasTouchedScore" class="mt-3 rounded-xl bg-sun-50 border border-sun-200 px-4 py-3">
+          <div v-if="isKnockout && finishType && hasTouchedScore" class="mt-3 rounded-xl bg-sun-50 border border-sun-200 px-4 py-3 space-y-1.5">
             <p class="text-xs text-sun-800">
               <span class="font-semibold">Bold prediction!</span>
               {{ finishType === 'FT' ? 'You\'re predicting a decisive result in 90 minutes. The score must have a clear winner.' : finishType === 'AET' ? 'You\'re predicting the match goes to extra time where a winner is decided. Score after ET must have a clear winner.' : 'You\'re predicting the match stays level through extra time and goes to a penalty shootout. Your winner pick determines who wins on pens.' }}
+            </p>
+            <p class="text-xs text-sun-700">
+              {{ finishType === 'FT' ? 'If the match goes to extra time or penalties instead, you won\'t earn scoreline points — even if the numbers match.' : finishType === 'AET' ? 'If the match is decided in 90 minutes or goes to penalties instead, you won\'t earn scoreline points — even if the numbers match.' : 'If the match is decided before penalties (in 90 min or extra time), you won\'t earn scoreline points — even if the numbers match.' }}
             </p>
           </div>
 

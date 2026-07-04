@@ -12,9 +12,18 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
-const LOCK_BEFORE_KICKOFF_MS = 3 * 60 * 60 * 1000;
 const SEND_EMAIL_URL = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-email`;
 const APP_BASE_URL = Deno.env.get("APP_BASE_URL") || "https://play.sycamore.ng";
+
+async function getLockBeforeKickoffMs(): Promise<number> {
+  const { data } = await supabase
+    .from("campaign_config")
+    .select("prediction_lock_minutes")
+    .eq("id", 1)
+    .maybeSingle();
+  const minutes = data?.prediction_lock_minutes ?? 60;
+  return minutes * 60 * 1000;
+}
 
 function deriveFirstName(name: string | null | undefined, username: string | null | undefined, email: string): string {
   if (name) {
@@ -438,7 +447,8 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      const lockTime = new Date(match.kickoff_at).getTime() - LOCK_BEFORE_KICKOFF_MS;
+      const lockMs = await getLockBeforeKickoffMs();
+      const lockTime = new Date(match.kickoff_at).getTime() - lockMs;
       if (Date.now() >= lockTime && match.status !== "postponed") {
         return new Response(
           JSON.stringify({ error: "Predictions are locked for this match." }),

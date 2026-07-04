@@ -418,16 +418,40 @@ async function rescoreMatch(matchId: string) {
       .maybeSingle();
     const winnerName = winningTeam?.name || winningTeam?.code || "Your Team";
 
-    // Fire sweep-trigger immediately (fire-and-forget) before the heavy backer loop
+    // Call sweep-trigger with retry for opted-in auto-savings users
     const sweepUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/sweep-trigger`;
-    fetch(sweepUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-      },
-      body: JSON.stringify({ winning_team_id: winnerId, match_id: match.id }),
-    }).catch(() => {});
+    let sweepOk = false;
+    for (let attempt = 0; attempt < 3 && !sweepOk; attempt++) {
+      try {
+        const sweepRes = await fetch(sweepUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({ winning_team_id: winnerId, match_id: match.id }),
+        });
+        sweepOk = sweepRes.ok;
+        if (!sweepOk) {
+          const errBody = await sweepRes.text().catch(() => "");
+          pulseTrack("system", "sweep_trigger_failed", {
+            match_id: match.id,
+            winning_team_id: winnerId,
+            attempt: attempt + 1,
+            status: sweepRes.status,
+            error: errBody,
+          });
+        }
+      } catch (err) {
+        pulseTrack("system", "sweep_trigger_error", {
+          match_id: match.id,
+          winning_team_id: winnerId,
+          attempt: attempt + 1,
+          error: (err as Error).message,
+        });
+      }
+      if (!sweepOk && attempt < 2) await new Promise((r) => setTimeout(r, 2000));
+    }
 
     const { data: backers } = await supabase
       .from("synced_users")
