@@ -186,6 +186,7 @@ function deriveGroup(round: string): string {
 interface ApiTeam {
   id: number;
   name: string;
+  winner?: boolean | null;
 }
 
 interface ApiFixture {
@@ -196,9 +197,11 @@ interface ApiFixture {
 }
 
 interface ApiEvent {
-  time: { elapsed: number };
+  time: { elapsed: number; extra?: number | null };
   team: { id: number; name: string };
   type: string;
+  detail?: string;
+  comments?: string | null;
 }
 
 async function callApi(path: string): Promise<any> {
@@ -285,6 +288,13 @@ async function rescoreMatch(matchId: string) {
 
   if (!match || match.status !== "completed") return;
 
+  // Remove old notifications for this match to prevent duplicates on rescore
+  await supabase
+    .from("notifications")
+    .delete()
+    .in("type", ["prediction_correct", "prediction_incorrect", "team_won"])
+    .eq("metadata->>match_id", matchId);
+
   const { data: preds } = await supabase
     .from("predictions")
     .select("*, user:synced_users!predictions_user_id_fkey(email, name, username, backed_team_id)")
@@ -297,7 +307,7 @@ async function rescoreMatch(matchId: string) {
       ? match.home_team_id
       : match.away_score > match.home_score
         ? match.away_team_id
-        : null;
+        : match.penalty_winner_team_id || null;
 
   for (const p of preds) {
     let matchResultPoints = 0;
@@ -324,7 +334,13 @@ async function rescoreMatch(matchId: string) {
       p.predicted_home_score === match.home_score &&
       p.predicted_away_score === match.away_score
     ) {
-      exactScorelinePoints = 15;
+      if (match.finish_type === "PEN" && p.predicted_finish_type === "PEN") {
+        exactScorelinePoints = 25;
+      } else if (match.finish_type === "AET" && p.predicted_finish_type === "AET") {
+        exactScorelinePoints = 20;
+      } else {
+        exactScorelinePoints = 15;
+      }
     }
 
     const pts = matchResultPoints + firstGoalscorerPoints + exactScorelinePoints;
@@ -652,7 +668,7 @@ async function syncResults(league: number, season: number) {
     const ev = await callApi(`/fixtures/events?fixture=${fixture.fixture.id}`);
     const events: ApiEvent[] = ev.response || [];
     const goals = events
-      .filter((e) => e.type === "Goal")
+      .filter((e) => e.type === "Goal" && !(e.comments && e.comments.toLowerCase().includes("penalty shootout")))
       .sort((a, b) => a.time.elapsed - b.time.elapsed);
     if (goals.length > 0) {
       const goalTeam = goals[0].team as any;
@@ -669,12 +685,24 @@ async function syncResults(league: number, season: number) {
       }
     }
 
+    // Determine penalty winner for knockout matches decided on penalties
+    let penaltyWinner: string | null = null;
+    if (fixture.fixture.status.short === "PEN") {
+      if (fixture.teams.home.winner === true) {
+        penaltyWinner = dbMatch.home_team_id;
+      } else if (fixture.teams.away.winner === true) {
+        penaltyWinner = dbMatch.away_team_id;
+      }
+    }
+
     const { error: updateErr } = await supabase
       .from("matches")
       .update({
         home_score: fixture.goals.home ?? 0,
         away_score: fixture.goals.away ?? 0,
         first_to_score_team_id: firstToScore,
+        penalty_winner_team_id: penaltyWinner,
+        finish_type: fixture.fixture.status.short,
         status: "completed",
         updated_at: new Date().toISOString(),
       })
@@ -707,7 +735,7 @@ async function ensureTruthEvents(matchId: string, apiFixtureId: number | null) {
     const ev = await callApi(`/fixtures/events?fixture=${apiFixtureId}`);
     const events: ApiEvent[] = ev.response || [];
     const goals = events
-      .filter((e) => e.type === "Goal")
+      .filter((e) => e.type === "Goal" && !(e.comments && e.comments.toLowerCase().includes("penalty shootout")))
       .sort((a, b) => a.time.elapsed - b.time.elapsed);
 
     let firstScorer: string | null = null;

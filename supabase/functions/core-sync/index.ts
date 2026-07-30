@@ -33,6 +33,7 @@ interface InboundRecord {
   last_name?: string;
   phone_number?: string;
   account_number?: string;
+  bank_name?: string;
   active_customer_flag?: boolean;
   // Extended traits from Core (forwarded to Pulse, not stored locally)
   gender?: string;
@@ -73,6 +74,7 @@ interface NormalisedRecord {
   name: string;
   phone_number: string;
   account_number: string | null;
+  bank_name: string | null;
   active_customer_flag: boolean;
   is_account_valid: boolean;
   qualifying_transactions_count: number;
@@ -96,6 +98,7 @@ function validate(rec: InboundRecord): { ok: true; row: NormalisedRecord } | { o
     ? Math.max(0, Math.floor(rec.qualifying_transactions_count as number))
     : 0;
   const coreUserId = (rec.user_id || "").trim() || null;
+  const bankName = (rec.bank_name || "").trim() || null;
 
   return {
     ok: true,
@@ -104,6 +107,7 @@ function validate(rec: InboundRecord): { ok: true; row: NormalisedRecord } | { o
       name: name || email.split("@")[0],
       phone_number: phone,
       account_number: account || null,
+      bank_name: bankName,
       active_customer_flag: !!flag,
       is_account_valid: account ? NUBAN_RE.test(account) : false,
       qualifying_transactions_count: txCount,
@@ -191,6 +195,8 @@ async function upsertOne(row: NormalisedRecord) {
   };
   // Only write core_user_id if provided (don't overwrite existing with null)
   if (!row.core_user_id) delete payload.core_user_id;
+  // Only write bank_name if provided (don't overwrite existing with null)
+  if (!row.bank_name) delete payload.bank_name;
 
   const { error } = await supabase
     .from("synced_users")
@@ -284,6 +290,7 @@ Deno.serve(async (req: Request) => {
             accepted.map((row) => {
               const payload: Record<string, unknown> = { ...row, updated_at: new Date().toISOString() };
               if (!row.core_user_id) delete payload.core_user_id;
+              if (!row.bank_name) delete payload.bank_name;
               return payload;
             }),
             { onConflict: "email" },

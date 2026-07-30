@@ -5,6 +5,7 @@ interface CampaignConfig {
   campaign_name: string
   week_start_date: string
   prediction_lock_minutes: number
+  tournament_ended: boolean
 }
 
 const DEFAULT_CONFIG: CampaignConfig = {
@@ -14,6 +15,7 @@ const DEFAULT_CONFIG: CampaignConfig = {
   campaign_name: 'FIFA World Cup 2026',
   week_start_date: '2026-06-11',
   prediction_lock_minutes: 60,
+  tournament_ended: false,
 }
 
 export const useCampaign = () => {

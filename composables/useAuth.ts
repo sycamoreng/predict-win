@@ -14,6 +14,7 @@ interface SessionUser {
   core_user_id?: string | null
   social_handles?: SocialHandles | null
   account_number: string | null
+  bank_name?: string | null
   active_customer_flag: boolean
   qualifying_transactions_count: number
   is_account_valid: boolean

@@ -1051,12 +1051,110 @@ const exportUsers = async () => {
   }
 }
 
+// --- Acquisition ---
+const acquisitionData = ref<{
+  totalOrganic: number
+  neverTransacted: number
+  becameActive: number
+  conversionRate: number
+} | null>(null)
+const acquisitionLoading = ref(false)
+const acquisitionExporting = ref(false)
+
+const loadAcquisition = async () => {
+  acquisitionLoading.value = true
+  try {
+    const { count: totalOrganic } = await supabase
+      .from('synced_users')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_staff', false)
+      .gt('created_at', '2026-06-08T23:59:59+00:00')
+
+    const { count: neverTransacted } = await supabase
+      .from('synced_users')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_staff', false)
+      .gt('created_at', '2026-06-08T23:59:59+00:00')
+      .eq('qualifying_transactions_count', 0)
+      .eq('active_customer_flag', false)
+
+    const total = totalOrganic || 0
+    const never = neverTransacted || 0
+    const active = total - never
+
+    acquisitionData.value = {
+      totalOrganic: total,
+      neverTransacted: never,
+      becameActive: active,
+      conversionRate: total > 0 ? Math.round((active / total) * 100) : 0,
+    }
+  } catch (e) {
+    error.value = (e as Error).message
+  } finally {
+    acquisitionLoading.value = false
+  }
+}
+
+const exportAcquisitionCsv = async () => {
+  acquisitionExporting.value = true
+  try {
+    const PAGE_SIZE = 1000
+    let allUsers: any[] = []
+    let offset = 0
+    let hasMore = true
+
+    while (hasMore) {
+      const { data } = await supabase
+        .from('synced_users')
+        .select('id, email, name, username, phone_number, social_handles, created_at, total_points, backed_team_id')
+        .eq('is_staff', false)
+        .gt('created_at', '2026-06-08T23:59:59+00:00')
+        .eq('qualifying_transactions_count', 0)
+        .eq('active_customer_flag', false)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + PAGE_SIZE - 1)
+
+      if (!data || data.length === 0) { hasMore = false; break }
+      allUsers = allUsers.concat(data)
+      if (data.length < PAGE_SIZE) hasMore = false
+      else offset += PAGE_SIZE
+    }
+
+    const headers = ['email', 'name', 'username', 'phone_number', 'twitter', 'instagram', 'threads', 'tiktok', 'total_points', 'joined']
+    const csv = [headers.join(',')]
+      .concat(allUsers.map((u) => [
+        csvCell(u.email),
+        csvCell(u.name),
+        csvCell(u.username || ''),
+        csvCell(u.phone_number || ''),
+        csvCell(u.social_handles?.twitter || ''),
+        csvCell(u.social_handles?.instagram || ''),
+        csvCell(u.social_handles?.threads || ''),
+        csvCell(u.social_handles?.tiktok || ''),
+        csvCell(u.total_points || 0),
+        csvCell(u.created_at?.slice(0, 10) || ''),
+      ].join(',')))
+      .join('\n')
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `acquisition-organic-never-transacted.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  } finally {
+    acquisitionExporting.value = false
+  }
+}
+
 // Load tab data on tab change
 watch(activeTab, (tab) => {
   if (tab === 'campaign' && !campaignConfig.value) loadCampaignConfig()
   if (tab === 'teams' && !teamsList.value.length) loadTeams()
   if (tab === 'admins' && !adminsList.value.length) loadAdmins()
   if (tab === 'reports' && !reportData.value) loadReports()
+  if (tab === 'reports' && !acquisitionData.value) loadAcquisition()
   if (tab === 'users' && !usersPreview.value.length) loadUsersPreview()
 }, { immediate: true })
 </script>
@@ -1999,6 +2097,61 @@ watch(activeTab, (tab) => {
                 <div class="flex-1 h-7 bg-ink-100 rounded-lg overflow-hidden relative">
                   <div class="h-full bg-coral-400 rounded-lg" :style="{ width: reportData.totalUsers ? (reportData.usersWithTeam / reportData.totalUsers * 100) + '%' : '0%' }"></div>
                   <span class="absolute inset-0 flex items-center justify-center text-xs font-bold" :class="reportData.usersWithTeam > reportData.totalUsers * 0.5 ? 'text-white' : 'text-ink-700'">{{ reportData.usersWithTeam }} ({{ reportData.totalUsers ? Math.round(reportData.usersWithTeam / reportData.totalUsers * 100) : 0 }}%)</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Acquisition (organic predictor signups) -->
+          <div class="card p-5 space-y-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <h3 class="font-bold text-ink-900">Organic acquisition</h3>
+                <p class="text-sm text-ink-500">Users who signed up on the predictor after launch (post Jun 8) and never transacted on Sycamore.</p>
+              </div>
+              <button
+                @click="exportAcquisitionCsv"
+                :disabled="acquisitionExporting || !acquisitionData"
+                class="pill bg-sky-100 text-sky-700 hover:bg-sky-200 text-xs shrink-0"
+              >
+                {{ acquisitionExporting ? 'Exporting...' : 'Export CSV' }}
+              </button>
+            </div>
+
+            <div v-if="acquisitionLoading && !acquisitionData" class="h-20 bg-ink-100/40 rounded-xl animate-pulse"></div>
+
+            <div v-else-if="acquisitionData" class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div class="bg-slate-50 rounded-xl p-4 text-center">
+                <div class="text-2xl font-extrabold text-ink-900">{{ acquisitionData.totalOrganic.toLocaleString() }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Total organic signups</div>
+              </div>
+              <div class="bg-slate-50 rounded-xl p-4 text-center">
+                <div class="text-2xl font-extrabold text-coral-600">{{ acquisitionData.neverTransacted.toLocaleString() }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Never transacted</div>
+              </div>
+              <div class="bg-slate-50 rounded-xl p-4 text-center">
+                <div class="text-2xl font-extrabold text-mint-600">{{ acquisitionData.becameActive.toLocaleString() }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Became active</div>
+              </div>
+              <div class="bg-slate-50 rounded-xl p-4 text-center">
+                <div class="text-2xl font-extrabold text-sky-600">{{ acquisitionData.conversionRate }}%</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Conversion rate</div>
+              </div>
+            </div>
+
+            <div v-if="acquisitionData" class="flex items-center gap-3">
+              <div class="flex-1 h-8 bg-ink-100 rounded-lg overflow-hidden flex">
+                <div
+                  class="h-full bg-mint-500 flex items-center justify-center text-xs font-bold text-white"
+                  :style="{ width: acquisitionData.conversionRate + '%' }"
+                >
+                  {{ acquisitionData.conversionRate }}% converted
+                </div>
+                <div
+                  class="h-full bg-coral-400 flex items-center justify-center text-xs font-bold text-white"
+                  :style="{ width: (100 - acquisitionData.conversionRate) + '%' }"
+                >
+                  {{ 100 - acquisitionData.conversionRate }}% unconverted
                 </div>
               </div>
             </div>

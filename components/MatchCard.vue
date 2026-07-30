@@ -41,7 +41,6 @@ const KNOCKOUT_STAGES = new Set(['round_of_16', 'round_of_32', 'quarter_final', 
 const props = defineProps<{
   match: Match
   prediction?: Prediction | null
-  forceKnockout?: boolean
 }>()
 
 const emit = defineEmits<{ saved: [Prediction] }>()
@@ -67,7 +66,7 @@ const hasTouchedFirstScorer = ref(!!props.prediction?.wants_first_to_score_pick)
 const hasTouchedScore = ref(!!props.prediction?.wants_exact_score_pick)
 
 // Knockout mode
-const isKnockout = computed(() => props.forceKnockout || KNOCKOUT_STAGES.has(props.match.stage))
+const isKnockout = computed(() => KNOCKOUT_STAGES.has(props.match.stage))
 const finishType = ref<FinishType | null>((props.prediction?.predicted_finish_type as FinishType) ?? null)
 
 const saving = ref(false)

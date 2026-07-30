@@ -204,7 +204,7 @@ const onLogout = async () => {
               <div v-if="isGuest" class="mt-1 text-[10px] text-sun-600 font-semibold uppercase">Guest account</div>
             </div>
             <div v-if="user.account_number && !isGuest" class="px-3 py-2 border-b border-ink-100">
-              <div class="text-[10px] text-ink-400 font-semibold uppercase tracking-wider">Sycamore MFB</div>
+              <div class="text-[10px] text-ink-400 font-semibold uppercase tracking-wider">{{ user.bank_name || 'Bank Account' }}</div>
               <div class="flex items-center gap-2 mt-0.5">
                 <span class="font-mono text-sm font-bold text-ink-900">{{ user.account_number }}</span>
                 <button @click.stop="copyAccountNumber" class="text-sky-600 hover:text-sky-700 transition" title="Copy account number">

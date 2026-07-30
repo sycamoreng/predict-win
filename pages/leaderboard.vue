@@ -97,6 +97,18 @@ const loadStaffOverall = async () => {
   staffPlayersOverall.value = data || []
 }
 
+const tournamentEnded = computed(() => campaign.value.tournament_ended === true)
+
+const overallChampion = computed(() => {
+  if (!tournamentEnded.value || players.value.length === 0) return null
+  return players.value[0]
+})
+
+const staffChampion = computed(() => {
+  if (!tournamentEnded.value || !isStaff.value || staffPlayersOverall.value.length === 0) return null
+  return staffPlayersOverall.value[0]
+})
+
 const load = async () => {
   await refreshUser()
   await loadCampaign()
@@ -250,6 +262,22 @@ onMounted(() => {
 
     <!-- Leaderboard enabled -->
     <template v-else>
+      <!-- Tournament ended celebration -->
+      <template v-if="tournamentEnded && !loading">
+        <LeaderboardCelebration
+          v-if="overallChampion"
+          :champion="overallChampion"
+          :current-user-id="user?.id"
+          label="Overall Champion"
+        />
+        <LeaderboardCelebration
+          v-if="staffChampion"
+          :champion="staffChampion"
+          :current-user-id="user?.id"
+          label="Staff Champion"
+        />
+      </template>
+
       <!-- Header with mode toggle -->
       <div class="flex flex-col gap-4">
         <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">

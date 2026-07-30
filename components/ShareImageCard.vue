@@ -1,6 +1,6 @@
 <script setup lang="ts">
 const props = defineProps<{
-  variant: 'stats' | 'prediction' | 'rank' | 'achievement'
+  variant: 'stats' | 'prediction' | 'rank' | 'achievement' | 'champion'
   username?: string
   // Stats variant
   totalPoints?: number
@@ -22,6 +22,9 @@ const props = defineProps<{
   rankPosition?: number
   rankPoints?: number
   rankLabel?: string
+  // Champion variant
+  championPoints?: number
+  championLabel?: string
 }>()
 
 const accuracy = computed(() => {
@@ -133,6 +136,22 @@ const winnerLabel = computed(() => {
             <div class="text-7xl font-extrabold text-white leading-none mb-3">#{{ rankPosition }}</div>
             <div class="text-xs font-bold text-sky-300 uppercase tracking-wider">{{ rankLabel || 'on the leaderboard' }}</div>
             <div class="mt-4 text-3xl font-extrabold text-sun-400">{{ rankPoints }} <span class="text-lg text-ink-400">pts</span></div>
+          </div>
+        </div>
+      </template>
+
+      <!-- CHAMPION variant -->
+      <template v-if="variant === 'champion'">
+        <div class="mt-6">
+          <div class="text-sky-400 text-sm font-bold uppercase tracking-wider mb-1">@{{ username }}</div>
+        </div>
+
+        <div class="mt-auto mb-auto flex flex-col items-center justify-center text-center">
+          <div class="bg-gradient-to-b from-sun-400/10 to-sun-600/5 border border-sun-400/20 rounded-3xl px-12 py-10">
+            <div class="text-7xl mb-4">&#127942;</div>
+            <div class="text-xs font-bold text-sun-400 uppercase tracking-wider mb-2">{{ championLabel || 'Tournament Champion' }}</div>
+            <div class="text-3xl font-extrabold text-white leading-tight">#1</div>
+            <div class="mt-4 text-4xl font-extrabold text-sun-400">{{ championPoints }} <span class="text-lg text-ink-400">pts</span></div>
           </div>
         </div>
       </template>

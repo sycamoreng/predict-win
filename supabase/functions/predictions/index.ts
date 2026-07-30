@@ -183,7 +183,7 @@ async function rescoreMatch(matchId: string) {
       ? match.home_team_id
       : match.away_score > match.home_score
         ? match.away_team_id
-        : null;
+        : match.penalty_winner_team_id || null;
 
   for (const p of preds) {
     let pts = 0;
@@ -206,7 +206,13 @@ async function rescoreMatch(matchId: string) {
       p.predicted_home_score === match.home_score &&
       p.predicted_away_score === match.away_score
     ) {
-      pts += 15;
+      if (match.finish_type === "PEN" && p.predicted_finish_type === "PEN") {
+        pts += 25;
+      } else if (match.finish_type === "AET" && p.predicted_finish_type === "AET") {
+        pts += 20;
+      } else {
+        pts += 15;
+      }
     }
 
     await supabase
@@ -220,7 +226,9 @@ async function rescoreMatch(matchId: string) {
 
     const winnerCorrectPts = (p.wants_winner_pick && ((winnerId === null && p.predicted_winner_team_id === null) || (winnerId !== null && p.predicted_winner_team_id === winnerId))) ? 5 : 0;
     const firstToScorePts = (p.wants_first_to_score_pick && match.first_to_score_team_id && p.predicted_first_to_score_team_id === match.first_to_score_team_id) ? 10 : 0;
-    const exactScorePts = (p.wants_exact_score_pick && p.predicted_home_score === match.home_score && p.predicted_away_score === match.away_score) ? 15 : 0;
+    const exactScorePts = (p.wants_exact_score_pick && p.predicted_home_score === match.home_score && p.predicted_away_score === match.away_score)
+      ? (match.finish_type === "PEN" && p.predicted_finish_type === "PEN" ? 25 : match.finish_type === "AET" && p.predicted_finish_type === "AET" ? 20 : 15)
+      : 0;
 
     await logEvent(p.user_id, pts > 0 ? "prediction_correct" : "prediction_incorrect", {
       email: u?.email,
@@ -465,7 +473,11 @@ Deno.serve(async (req: Request) => {
             ? match.home_team_id
             : awayScoreNum > homeScoreNum
               ? match.away_team_id
-              : null)
+              : (predicted_finish_type === "AET" || predicted_finish_type === "PEN")
+                ? (winner_team_id === match.home_team_id || winner_team_id === match.away_team_id
+                  ? winner_team_id
+                  : null)
+                : null)
           : (winner_team_id === match.home_team_id || winner_team_id === match.away_team_id
             ? winner_team_id
             : null))
