@@ -11,6 +11,18 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
+async function getActiveCampaign() {
+  const { data, error } = await supabase
+    .from("campaigns")
+    .select("id, name")
+    .eq("is_active", true)
+    .limit(1)
+    .single();
+
+  if (error || !data) return null;
+  return data;
+}
+
 const SEND_EMAIL_URL = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-email`;
 const APP_BASE_URL = Deno.env.get("APP_BASE_URL") || "https://play.sycamore.ng";
 
@@ -80,6 +92,9 @@ function formatPredictionSummary(
 }
 
 async function processReminderEmails() {
+  const campaign = await getActiveCampaign();
+  if (!campaign) return { reminder_matches: 0, reminder_emails: 0 };
+
   const now = Date.now();
   const fourHoursMs = 4 * 60 * 60 * 1000;
   const windowStart = new Date(now + fourHoursMs - 10 * 60 * 1000).toISOString();
@@ -90,6 +105,7 @@ async function processReminderEmails() {
     .select("id, kickoff_at, home_team:teams!matches_home_team_id_fkey(name, code), away_team:teams!matches_away_team_id_fkey(name, code)")
     .eq("status", "scheduled")
     .eq("reminder_email_sent", false)
+    .eq("campaign_id", campaign.id)
     .gte("kickoff_at", windowStart)
     .lte("kickoff_at", windowEnd);
 
@@ -97,7 +113,6 @@ async function processReminderEmails() {
 
   const matchIds = matches.map((m) => m.id);
 
-  // Get all opted-in users
   const { data: allUsers } = await supabase
     .from("synced_users")
     .select("id, email, name, username")
@@ -108,7 +123,6 @@ async function processReminderEmails() {
     return { reminder_matches: matches.length, reminder_emails: 0 };
   }
 
-  // Get users who already predicted these matches
   const { data: existingPreds } = await supabase
     .from("predictions")
     .select("user_id, match_id")
@@ -121,7 +135,6 @@ async function processReminderEmails() {
   for (const match of matches) {
     const m = match as unknown as MatchWithTeams;
     const kickoff = new Date(m.kickoff_at);
-    // Lock time is 3h before kickoff
     const lockDate = new Date(kickoff.getTime() - 3 * 60 * 60 * 1000);
     const lockTime = lockDate.toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Africa/Lagos" });
 
@@ -142,7 +155,6 @@ async function processReminderEmails() {
     }
   }
 
-  // Send in batches of 20
   for (let i = 0; i < emailBatch.length; i += 20) {
     await sendBatchEmails(emailBatch.slice(i, i + 20));
   }
@@ -153,6 +165,9 @@ async function processReminderEmails() {
 }
 
 async function processLockEmails() {
+  const campaign = await getActiveCampaign();
+  if (!campaign) return { lock_matches: 0, lock_emails: 0 };
+
   const now = Date.now();
   const threeHoursMs = 3 * 60 * 60 * 1000;
   const windowStart = new Date(now + threeHoursMs - 10 * 60 * 1000).toISOString();
@@ -163,6 +178,7 @@ async function processLockEmails() {
     .select("id, kickoff_at, home_team:teams!matches_home_team_id_fkey(name, code), away_team:teams!matches_away_team_id_fkey(name, code)")
     .eq("status", "scheduled")
     .eq("lock_email_sent", false)
+    .eq("campaign_id", campaign.id)
     .gte("kickoff_at", windowStart)
     .lte("kickoff_at", windowEnd);
 

@@ -31,7 +31,7 @@ const shareText = computed(() => {
   }
   lines.push('')
   lines.push('Can you beat me? Join the Predictor League!')
-  lines.push('#SycamorePredictor #WorldCup2026')
+  lines.push('#SycamorePredictor')
   return lines.join('\n')
 })
 

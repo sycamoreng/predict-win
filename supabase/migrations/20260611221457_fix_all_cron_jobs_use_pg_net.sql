@@ -123,7 +123,7 @@ SELECT cron.schedule(
     url := 'https://xeknejizhassdkpedaoh.supabase.co/functions/v1/weekly-digest',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhla25laml6aGFzc2RrcGVkYW9oIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MDQ1NTgyMCwiZXhwIjoyMDk2MDMxODIwfQ.R1KlUm6b7MF3IA3sFMJdG5fHfDXwJKGXvEnqI1FmCJY'
+      'Authorization', 'Bearer <REDACTED_SERVICE_ROLE_KEY>'
     ),
     body := '{}'::jsonb
   )$$

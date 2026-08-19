@@ -5,6 +5,23 @@ interface SocialHandles {
   tiktok?: string
 }
 
+export interface CampaignParticipation {
+  id: string
+  campaign_id: string
+  total_points: number
+  correct_predictions_count: number
+  exact_scorelines_count: number
+  backed_team_id: string | null
+  backed_team?: { id: string; name: string; flag_emoji: string; code: string } | null
+  backed_team_wins: number
+  backed_team_locked_at: string | null
+  auto_savings_enabled: boolean
+  auto_savings_amount: number | null
+  auto_savings_duration: number | null
+  auto_savings_consented_at: string | null
+  joined_at: string
+}
+
 interface SessionUser {
   id: string
   email: string
@@ -19,6 +36,7 @@ interface SessionUser {
   qualifying_transactions_count: number
   is_account_valid: boolean
   is_staff: boolean
+  // Legacy fields kept for backward compat during transition
   total_points: number
   correct_predictions_count: number
   exact_scorelines_count: number
@@ -51,6 +69,9 @@ const ADMIN_STORAGE_KEY = 'predictor_admin'
 export const useAuth = () => {
   const user = useState<SessionUser | null>('auth-user', () => null)
   const admin = useState<AdminInfo | null>('auth-admin', () => null)
+  const participation = useState<CampaignParticipation | null>('campaign-participation', () => null)
+  const streak = useState<{ current_streak: number; longest_streak: number } | null>('campaign-streak', () => null)
+  const chipCount = useState<number>('campaign-chip-count', () => 0)
 
   const loadFromStorage = () => {
     if (!import.meta.client) return
@@ -153,31 +174,76 @@ export const useAuth = () => {
     return user.value.name?.split(' ')[0] || user.value.email.split('@')[0]
   })
 
+  const isEnrolled = computed(() => !!participation.value)
+
+  const campaignPoints = computed(() => participation.value?.total_points ?? 0)
+  const campaignBackedTeam = computed(() => participation.value?.backed_team ?? null)
+  const campaignBackedTeamId = computed(() => participation.value?.backed_team_id ?? null)
+  const campaignBackedTeamWins = computed(() => participation.value?.backed_team_wins ?? 0)
+  const campaignBackedTeamLockedAt = computed(() => participation.value?.backed_team_locked_at ?? null)
+  const campaignCorrectPredictions = computed(() => participation.value?.correct_predictions_count ?? 0)
+  const campaignExactScorelines = computed(() => participation.value?.exact_scorelines_count ?? 0)
+  const campaignCurrentStreak = computed(() => streak.value?.current_streak ?? 0)
+  const campaignLongestStreak = computed(() => streak.value?.longest_streak ?? 0)
+  const campaignChipsUsed = computed(() => chipCount.value)
+
+  const loadParticipation = async (campaignId: string) => {
+    if (!user.value) return
+    const supabase = useSupabase()
+    const { data } = await supabase
+      .from('campaign_participants')
+      .select('*, backed_team:teams!campaign_participants_backed_team_id_fkey(*)')
+      .eq('campaign_id', campaignId)
+      .eq('user_id', user.value.id)
+      .maybeSingle()
+    participation.value = data as CampaignParticipation | null
+
+    const [{ data: streakData }, { count: chips }] = await Promise.all([
+      supabase
+        .from('user_streaks')
+        .select('current_streak, longest_streak')
+        .eq('campaign_id', campaignId)
+        .eq('user_id', user.value.id)
+        .maybeSingle(),
+      supabase
+        .from('chip_activations')
+        .select('id', { count: 'exact', head: true })
+        .eq('campaign_id', campaignId)
+        .eq('user_id', user.value.id),
+    ])
+    streak.value = (streakData as { current_streak: number; longest_streak: number } | null) ?? null
+    chipCount.value = chips ?? 0
+  }
+
+  const joinCampaign = async (campaignId: string) => {
+    if (!user.value || isEnrolled.value) return
+    const supabase = useSupabase()
+    const { error } = await supabase
+      .from('campaign_participants')
+      .insert({ campaign_id: campaignId, user_id: user.value.id })
+    if (!error) {
+      await loadParticipation(campaignId)
+    }
+    return error
+  }
+
   const refreshUser = async () => {
     if (!user.value) return
     const supabase = useSupabase()
 
-    if (user.value.is_guest) {
-      const { data } = await supabase
-        .from('synced_users')
-        .select('*, backed_team:teams!synced_users_backed_team_id_fkey(*)')
-        .eq('email', user.value.email)
-        .maybeSingle()
-      if (data) {
-        user.value = data as SessionUser
-        if (import.meta.client) localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
-      }
-      return
-    }
+    const query = user.value.is_guest
+      ? supabase.from('synced_users').select('*').eq('email', user.value.email)
+      : supabase.from('synced_users').select('*').eq('id', user.value.id)
 
-    const { data } = await supabase
-      .from('synced_users')
-      .select('*, backed_team:teams!synced_users_backed_team_id_fkey(*)')
-      .eq('id', user.value.id)
-      .maybeSingle()
+    const { data } = await query.maybeSingle()
     if (data) {
       user.value = data as SessionUser
       if (import.meta.client) localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+    }
+
+    const { config } = useCampaign()
+    if (config.value.id) {
+      await loadParticipation(config.value.id)
     }
   }
 
@@ -187,11 +253,24 @@ export const useAuth = () => {
   const logout = () => {
     resetPulse()
     setSession(null)
+    participation.value = null
+    streak.value = null
+    chipCount.value = 0
   }
 
   const adminLogout = () => {
     setAdminSession(null)
   }
 
-  return { user, admin, isGuest, hasAccount, isStaff, isSycamoreUser, needsUsername, displayName, setSession, setAdminSession, loadFromStorage, refreshUser, logout, adminLogout, hasPermission, trackPulseEvent }
+  return {
+    user, admin, participation,
+    isGuest, hasAccount, isStaff, isSycamoreUser, needsUsername, isEnrolled,
+    displayName,
+    campaignPoints, campaignBackedTeam, campaignBackedTeamId,
+    campaignBackedTeamWins, campaignBackedTeamLockedAt,
+    campaignCorrectPredictions, campaignExactScorelines,
+    campaignCurrentStreak, campaignLongestStreak, campaignChipsUsed,
+    setSession, setAdminSession, loadFromStorage, loadParticipation, joinCampaign,
+    refreshUser, logout, adminLogout, hasPermission, trackPulseEvent,
+  }
 }

@@ -41,14 +41,14 @@ async function adminHasPermission(email: string, permission: AdminPermission): P
   return (ROLE_PERMISSIONS[data.role] || []).includes(permission);
 }
 
-async function getWeekAnchor(): Promise<Date> {
-  const { data } = await supabase
-    .from("campaign_config")
-    .select("week_start_date")
-    .eq("id", 1)
-    .maybeSingle();
-  if (data?.week_start_date) {
-    return new Date(data.week_start_date + "T00:00:00Z");
+async function getActiveCampaign() {
+  const { data } = await supabase.from("campaigns").select("*").eq("is_active", true).maybeSingle();
+  return data;
+}
+
+function getWeekAnchorFromCampaign(campaign: any): Date {
+  if (campaign?.week_start_date) {
+    return new Date(campaign.week_start_date + "T00:00:00Z");
   }
   return new Date("2026-06-11T00:00:00Z");
 }
@@ -80,13 +80,19 @@ interface Aggregate {
   matches_scored: number;
 }
 
-async function buildWeeklyWinners(weekStart: string, weekEnd: string, topN: number, staffFilter?: 'staff' | 'public' | 'all') {
-  const { data: completed } = await supabase
+async function buildWeeklyWinners(weekStart: string, weekEnd: string, topN: number, staffFilter?: 'staff' | 'public' | 'all', campaignId?: string) {
+  let matchQuery = supabase
     .from("matches")
     .select("id, home_score, away_score")
     .eq("status", "completed")
     .gte("kickoff_at", weekStart)
     .lt("kickoff_at", weekEnd);
+
+  if (campaignId) {
+    matchQuery = matchQuery.eq("campaign_id", campaignId);
+  }
+
+  const { data: completed } = await matchQuery;
 
   const matches = completed || [];
   if (matches.length === 0) {
@@ -185,11 +191,25 @@ Deno.serve(async (req: Request) => {
     }
 
     if (route === "weekly") {
+      let campaign: any = null;
+      if (body.campaign_id) {
+        const { data } = await supabase.from("campaigns").select("*").eq("id", body.campaign_id).maybeSingle();
+        campaign = data;
+      } else {
+        campaign = await getActiveCampaign();
+      }
+      if (!campaign) {
+        return new Response(JSON.stringify({ error: "No active campaign found" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       const topN = Math.min(200, Math.max(1, Number(body.top_n) || 25));
       const staffFilter = (body.filter || "public") as 'staff' | 'public' | 'all';
-      const anchor = await getWeekAnchor();
+      const anchor = getWeekAnchorFromCampaign(campaign);
       const { start, end, weekNumber } = weekBoundsFromAnchor(anchor, body.week_of);
-      const { winners, match_count } = await buildWeeklyWinners(start, end, topN, staffFilter);
+      const { winners, match_count } = await buildWeeklyWinners(start, end, topN, staffFilter, campaign.id);
       return new Response(
         JSON.stringify({
           success: true,
@@ -206,13 +226,28 @@ Deno.serve(async (req: Request) => {
     }
 
     if (route === "all-weeks") {
+      let campaign: any = null;
+      if (body.campaign_id) {
+        const { data } = await supabase.from("campaigns").select("*").eq("id", body.campaign_id).maybeSingle();
+        campaign = data;
+      } else {
+        campaign = await getActiveCampaign();
+      }
+      if (!campaign) {
+        return new Response(JSON.stringify({ error: "No active campaign found" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       const topN = Math.min(50, Math.max(1, Number(body.top_n) || 10));
       const staffFilter = (body.filter || "public") as 'staff' | 'public' | 'all';
-      const anchor = await getWeekAnchor();
+      const anchor = getWeekAnchorFromCampaign(campaign);
 
       const { data: bounds } = await supabase
         .from("matches")
         .select("kickoff_at")
+        .eq("campaign_id", campaign.id)
         .order("kickoff_at", { ascending: true });
       if (!bounds || bounds.length === 0) {
         return new Response(JSON.stringify({ success: true, weeks: [] }), {
@@ -233,7 +268,7 @@ Deno.serve(async (req: Request) => {
         if (wStart.getTime() > endMs) break;
         const wEnd = new Date(wStart.getTime() + 7 * 86_400_000);
         const { winners, match_count } = await buildWeeklyWinners(
-          wStart.toISOString(), wEnd.toISOString(), topN, staffFilter,
+          wStart.toISOString(), wEnd.toISOString(), topN, staffFilter, campaign.id,
         );
         if (match_count > 0) {
           weeks.push({
@@ -286,6 +321,25 @@ Deno.serve(async (req: Request) => {
 
       const acctNum = targetUser.account_number || "";
       const last4 = acctNum.length >= 4 ? acctNum.slice(-4) : acctNum;
+
+      // Guard against accidentally paying the same person twice: skip if an
+      // identical payout notification was already logged in the last 6 days.
+      const sinceIso = new Date(Date.now() - 6 * 86_400_000).toISOString();
+      const { data: recentPayouts } = await supabase
+        .from("analytics_events")
+        .select("properties")
+        .eq("user_id", targetUser.id)
+        .eq("event_name", "payout_notification")
+        .gte("created_at", sinceIso);
+      const alreadyPaid = (recentPayouts || []).some((e: any) =>
+        e.properties?.reward_type === rewardType && Number(e.properties?.amount) === amount
+      );
+      if (alreadyPaid) {
+        return new Response(
+          JSON.stringify({ success: true, skipped: true, reason: "duplicate", user: targetEmail, amount, reward_type: rewardType }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
 
       // Send payout notification email
       const SEND_EMAIL_URL = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-email`;
@@ -360,6 +414,23 @@ Deno.serve(async (req: Request) => {
       const results: { email: string; sent: boolean; error?: string }[] = [];
       const SEND_EMAIL_URL = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-email`;
 
+      // Pre-fetch recent payout notifications for these users so we can skip
+      // anyone who was already paid the same reward in the last 6 days.
+      const sinceIso = new Date(Date.now() - 6 * 86_400_000).toISOString();
+      const userIds = (users || []).map((u) => u.id);
+      const paidKeys = new Set<string>();
+      if (userIds.length > 0) {
+        const { data: recentPayouts } = await supabase
+          .from("analytics_events")
+          .select("user_id, properties")
+          .in("user_id", userIds)
+          .eq("event_name", "payout_notification")
+          .gte("created_at", sinceIso);
+        for (const e of recentPayouts || []) {
+          paidKeys.add(`${e.user_id}|${(e as any).properties?.reward_type}|${Number((e as any).properties?.amount)}`);
+        }
+      }
+
       for (const r of recipients) {
         const rEmail = r.email.trim().toLowerCase();
         const u = userMap.get(rEmail);
@@ -367,6 +438,12 @@ Deno.serve(async (req: Request) => {
           results.push({ email: rEmail, sent: false, error: "user_not_found" });
           continue;
         }
+
+        if (paidKeys.has(`${u.id}|${r.reward_type}|${Number(r.amount)}`)) {
+          results.push({ email: rEmail, sent: false, error: "duplicate" });
+          continue;
+        }
+        paidKeys.add(`${u.id}|${r.reward_type}|${Number(r.amount)}`);
 
         const acctNum = u.account_number || "";
         const last4 = acctNum.length >= 4 ? acctNum.slice(-4) : acctNum;

@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import confetti from 'canvas-confetti'
+let confetti: typeof import('canvas-confetti').default | null = null
+if (import.meta.client) {
+  import('canvas-confetti').then((m) => { confetti = m.default })
+}
 
 const props = defineProps<{
   champion: { id?: string; username?: string; name?: string; total_points: number } | null
@@ -39,6 +42,7 @@ const launchConfetti = () => {
   const end = Date.now() + duration
 
   const frame = () => {
+    if (!confetti) return
     confetti({
       particleCount: 3,
       angle: 60,
@@ -58,6 +62,7 @@ const launchConfetti = () => {
   frame()
 
   setTimeout(() => {
+    if (!confetti) return
     confetti({
       particleCount: 100,
       spread: 100,

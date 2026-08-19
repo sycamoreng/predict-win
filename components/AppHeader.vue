@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const { user, isGuest, displayName, loadFromStorage, logout } = useAuth()
+const { user, isGuest, displayName, loadFromStorage, logout, campaignBackedTeam, campaignBackedTeamWins, campaignPoints } = useAuth()
 const { config: campaign, load: loadCampaign } = useCampaign()
 const supabase = useSupabase()
 const route = useRoute()
@@ -68,16 +68,28 @@ const timeAgo = (dateStr: string) => {
   return `${days}d ago`
 }
 
-const navItems = computed(() => {
+const primaryNav = computed(() => {
   const items = [
-    { to: '/team', label: 'My Team' },
     { to: '/predict', label: 'Predict' },
+    { to: '/team', label: 'My Team' },
   ]
-  if (!isGuest.value) {
+  if (!isGuest.value || !campaign.value.require_eligibility_leaderboard) {
     items.push({ to: '/leaderboard', label: 'Leaderboard' })
   }
+  items.push({ to: '/groups', label: 'Groups' })
   return items
 })
+
+const moreNav = computed(() => {
+  const items = [{ to: '/side-quests', label: 'Quests' }]
+  if (!isGuest.value) {
+    items.push({ to: '/h2h', label: 'H2H' })
+  }
+  items.push({ to: '/campaigns', label: 'Campaigns' })
+  return items
+})
+
+const allNav = computed(() => [...primaryNav.value, ...moreNav.value])
 
 const initials = computed(() => {
   if (!user.value) return ''
@@ -90,7 +102,7 @@ const initials = computed(() => {
     .toUpperCase()
 })
 
-const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
+const backedTeamWins = computed(() => campaignBackedTeamWins.value)
 
 const copyAccountNumber = async () => {
   if (!user.value?.account_number) return
@@ -115,7 +127,7 @@ const onLogout = async () => {
       <ClientOnly>
       <nav v-if="user" class="hidden md:flex items-center gap-1">
         <NuxtLink
-          v-for="item in navItems"
+          v-for="item in primaryNav"
           :key="item.to"
           :to="item.to"
           class="px-4 py-2 rounded-xl text-sm font-semibold transition"
@@ -123,17 +135,42 @@ const onLogout = async () => {
         >
           {{ item.label }}
         </NuxtLink>
+
+        <!-- More dropdown -->
+        <div class="relative group">
+          <button
+            class="px-4 py-2 rounded-xl text-sm font-semibold transition flex items-center gap-1"
+            :class="moreNav.some((i) => route.path.startsWith(i.to)) ? 'bg-sky-50 text-sky-700' : 'text-ink-600 hover:bg-ink-100 hover:text-ink-900'"
+          >
+            More
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+          </button>
+          <div class="absolute left-0 pt-3 w-48 invisible opacity-0 group-hover:visible group-hover:opacity-100 transition">
+            <div class="card p-2">
+              <NuxtLink
+                v-for="item in moreNav"
+                :key="item.to"
+                :to="item.to"
+                class="block px-3 py-2 text-sm rounded-lg font-medium transition"
+                :class="route.path.startsWith(item.to) ? 'bg-sky-50 text-sky-700' : 'text-ink-700 hover:bg-ink-50'"
+              >
+                {{ item.label }}
+              </NuxtLink>
+            </div>
+          </div>
+        </div>
       </nav>
 
       <div v-if="user" class="flex items-center gap-3">
         <!-- Backed team badge -->
         <NuxtLink
-          v-if="user.backed_team && !isGuest"
+          v-if="campaignBackedTeam && !isGuest"
           to="/team"
           class="hidden sm:flex items-center gap-2 pill bg-sky-50 text-sky-700 hover:bg-sky-100 transition"
         >
-          <span class="text-base leading-none">{{ user.backed_team.flag_emoji }}</span>
-          <span class="font-semibold text-xs">{{ user.backed_team.code }}</span>
+          <img v-if="campaignBackedTeam.logo_url" :src="campaignBackedTeam.logo_url" :alt="campaignBackedTeam.code" class="w-5 h-5 object-contain" />
+          <span v-else class="text-base leading-none">{{ campaignBackedTeam.flag_emoji }}</span>
+          <span class="font-semibold text-xs">{{ campaignBackedTeam.code }}</span>
           <span class="text-[10px] text-sky-500 font-bold">{{ backedTeamWins }}W</span>
         </NuxtLink>
 
@@ -145,7 +182,7 @@ const onLogout = async () => {
 
         <div v-if="!isGuest" class="hidden sm:flex items-center gap-2 pill bg-mint-50 text-mint-700">
           <span class="w-1.5 h-1.5 rounded-full bg-mint-500"></span>
-          {{ user.total_points }} pts
+          {{ campaignPoints }} pts
         </div>
 
         <!-- Notification bell -->
@@ -213,15 +250,16 @@ const onLogout = async () => {
                 </button>
               </div>
             </div>
-            <div v-if="user.backed_team && !isGuest" class="px-3 py-2 border-b border-ink-100 flex items-center gap-2">
-              <span>{{ user.backed_team.flag_emoji }}</span>
-              <span class="text-sm text-ink-700 font-medium">{{ user.backed_team.name }}</span>
+            <div v-if="campaignBackedTeam && !isGuest" class="px-3 py-2 border-b border-ink-100 flex items-center gap-2">
+              <img v-if="campaignBackedTeam.logo_url" :src="campaignBackedTeam.logo_url" :alt="campaignBackedTeam.name" class="w-5 h-5 object-contain" />
+              <span v-else>{{ campaignBackedTeam.flag_emoji }}</span>
+              <span class="text-sm text-ink-700 font-medium">{{ campaignBackedTeam.name }}</span>
               <span class="ml-auto text-xs text-sky-600 font-bold">{{ backedTeamWins }} {{ backedTeamWins === 1 ? 'win' : 'wins' }}</span>
             </div>
             <NuxtLink v-if="!isGuest" to="/team" class="block px-3 py-2 text-sm rounded-lg hover:bg-ink-50 text-ink-700">My Team</NuxtLink>
             <NuxtLink to="/history" class="block px-3 py-2 text-sm rounded-lg hover:bg-ink-50 text-ink-700">Prediction History</NuxtLink>
             <NuxtLink v-if="!isGuest" to="/settings" class="block px-3 py-2 text-sm rounded-lg hover:bg-ink-50 text-ink-700">Settings</NuxtLink>
-            <a v-if="isGuest" href="https://appsflyer.sycamore.ng/Qthc/worldcup_website" target="_blank" rel="noreferrer" class="block px-3 py-2 text-sm rounded-lg hover:bg-sky-50 text-sky-700">
+            <a v-if="isGuest" href="https://appsflyer.sycamore.ng/Qthc/EPL" target="_blank" rel="noreferrer" class="block px-3 py-2 text-sm rounded-lg hover:bg-sky-50 text-sky-700">
               Get Sycamore App
             </a>
             <button @click="onLogout" class="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-coral-50 text-coral-700">
@@ -239,12 +277,12 @@ const onLogout = async () => {
 
     <ClientOnly>
     <nav v-if="user" class="md:hidden border-t border-ink-100">
-      <div class="max-w-6xl mx-auto px-2 flex">
+      <div class="max-w-6xl mx-auto px-2 flex overflow-x-auto no-scrollbar">
         <NuxtLink
-          v-for="item in navItems"
+          v-for="item in allNav"
           :key="item.to"
           :to="item.to"
-          class="flex-1 text-center py-3 text-sm font-semibold transition border-b-2"
+          class="flex-1 min-w-[72px] text-center py-3 text-sm font-semibold transition border-b-2 whitespace-nowrap"
           :class="route.path.startsWith(item.to) ? 'border-sky-500 text-sky-700' : 'border-transparent text-ink-500'"
         >
           {{ item.label }}

@@ -15,6 +15,20 @@ const supabase = createClient(
 const API_BASE = "https://v3.football.api-sports.io";
 const DEFAULT_LEAGUE = 1;
 const DEFAULT_SEASON = 2026;
+
+async function getActiveCampaignConfig() {
+  const { data } = await supabase.from("campaigns").select("*").eq("is_active", true).maybeSingle();
+  return data;
+}
+
+async function getCampaignLeagueAndSeason(): Promise<{ league: number; season: number; campaignId: string | null }> {
+  const c = await getActiveCampaignConfig();
+  return {
+    league: c?.api_football_league_id ?? DEFAULT_LEAGUE,
+    season: c?.api_football_season ?? DEFAULT_SEASON,
+    campaignId: c?.id ?? null,
+  };
+}
 const COMPLETED_STATUSES = new Set(["FT", "AET", "PEN"]);
 const SEND_EMAIL_URL = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-email`;
 const APP_BASE_URL = Deno.env.get("APP_BASE_URL") || "https://play.sycamore.ng";
@@ -178,6 +192,11 @@ function deriveStage(round: string): string {
   return "group";
 }
 
+function deriveMatchweek(round: string): number | null {
+  const m = (round || "").match(/(?:regular\s*season|matchday|matchweek|round)\s*-?\s*(\d+)/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+
 function deriveGroup(round: string): string {
   const m = (round || "").match(/group\s+([A-Z])/i);
   return m ? m[1].toUpperCase() : "";
@@ -199,6 +218,7 @@ interface ApiFixture {
 interface ApiEvent {
   time: { elapsed: number; extra?: number | null };
   team: { id: number; name: string };
+  player?: { id?: number | null; name?: string | null };
   type: string;
   detail?: string;
   comments?: string | null;
@@ -279,6 +299,120 @@ async function eliminateGroupStageTeams() {
   }
 }
 
+async function updateStreaksAndMilestones(match: any, preds: any[]) {
+  const campaignId = match.campaign_id;
+  if (!campaignId) return;
+
+  // Group predictions by user and determine if they scored > 0
+  const userScored = new Map<string, boolean>();
+  for (const p of preds) {
+    userScored.set(p.user_id, (p.points_awarded || 0) > 0);
+  }
+
+  // Check if user has streak_shield active this matchweek
+  const matchWeekNumber = match.matchweek || null;
+
+  for (const [userId, scored] of userScored) {
+    // Get or create streak record
+    let { data: streak } = await supabase
+      .from("user_streaks")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("campaign_id", campaignId)
+      .maybeSingle();
+
+    if (!streak) {
+      const { data: newStreak } = await supabase
+        .from("user_streaks")
+        .insert({ user_id: userId, campaign_id: campaignId, current_streak: 0, longest_streak: 0 })
+        .select("*")
+        .maybeSingle();
+      streak = newStreak;
+    }
+    if (!streak) continue;
+
+    const prevStreak = streak.current_streak;
+
+    if (scored) {
+      const newCurrent = prevStreak + 1;
+      const newLongest = Math.max(streak.longest_streak, newCurrent);
+      await supabase
+        .from("user_streaks")
+        .update({ current_streak: newCurrent, longest_streak: newLongest, last_match_id: match.id, updated_at: new Date().toISOString() })
+        .eq("id", streak.id);
+
+      // Check milestone rewards
+      const { data: milestones } = await supabase
+        .from("streak_milestones")
+        .select("id, threshold, bonus_points")
+        .eq("campaign_id", campaignId)
+        .gt("threshold", prevStreak)
+        .lte("threshold", newCurrent)
+        .order("threshold", { ascending: true });
+
+      for (const ms of milestones || []) {
+        // Check if already claimed
+        const { data: existing } = await supabase
+          .from("streak_milestone_claims")
+          .select("id")
+          .eq("user_id", userId)
+          .eq("milestone_id", ms.id)
+          .maybeSingle();
+
+        if (!existing) {
+          await supabase.from("streak_milestone_claims").insert({
+            user_id: userId,
+            milestone_id: ms.id,
+            campaign_id: campaignId,
+          });
+
+          // Award bonus points to user total
+          const { data: userData } = await supabase
+            .from("synced_users")
+            .select("total_points")
+            .eq("id", userId)
+            .maybeSingle();
+
+          await supabase
+            .from("synced_users")
+            .update({ total_points: (userData?.total_points || 0) + ms.bonus_points, updated_at: new Date().toISOString() })
+            .eq("id", userId);
+
+          // Send notification
+          await supabase.from("notifications").insert({
+            user_id: userId,
+            type: "streak_milestone",
+            title: `${ms.threshold} Streak Milestone!`,
+            body: `You earned +${ms.bonus_points} bonus points for reaching a ${ms.threshold}-prediction streak!`,
+            metadata: { milestone_id: ms.id, threshold: ms.threshold, bonus_points: ms.bonus_points, streak: newCurrent },
+          });
+        }
+      }
+    } else {
+      // Check for streak_shield chip before resetting
+      let shielded = false;
+      if (matchWeekNumber) {
+        const { data: shield } = await supabase
+          .from("chip_activations")
+          .select("id")
+          .eq("user_id", userId)
+          .eq("campaign_id", campaignId)
+          .eq("chip_type", "streak_shield")
+          .eq("week_number", matchWeekNumber)
+          .maybeSingle();
+        if (shield) shielded = true;
+      }
+
+      if (!shielded) {
+        await supabase
+          .from("user_streaks")
+          .update({ current_streak: 0, last_match_id: match.id, updated_at: new Date().toISOString() })
+          .eq("id", streak.id);
+      }
+    }
+  }
+}
+
 async function rescoreMatch(matchId: string) {
   const { data: match } = await supabase
     .from("matches")
@@ -308,6 +442,17 @@ async function rescoreMatch(matchId: string) {
       : match.away_score > match.home_score
         ? match.away_team_id
         : match.penalty_winner_team_id || null;
+
+  // Compute matchweek for chip lookups
+  let matchWeekNumber = match.matchweek;
+  if (!matchWeekNumber) {
+    // Fallback: compute from campaign week_start_date
+    const { data: campData } = await supabase.from("campaigns").select("week_start_date").eq("id", match.campaign_id).maybeSingle();
+    const anchor = new Date((campData?.week_start_date || "2026-08-16") + "T00:00:00Z");
+    const kickoff = new Date(match.kickoff_at);
+    const daysSince = Math.floor((kickoff.getTime() - anchor.getTime()) / (1000 * 60 * 60 * 24));
+    matchWeekNumber = Math.floor(daysSince / 7) + 1;
+  }
 
   for (const p of preds) {
     let matchResultPoints = 0;
@@ -345,9 +490,25 @@ async function rescoreMatch(matchId: string) {
 
     const pts = matchResultPoints + firstGoalscorerPoints + exactScorelinePoints;
 
+    // Check for any chip this matchweek (only 1 allowed per week)
+    const { data: chipActive } = await supabase
+      .from("chip_activations")
+      .select("id, chip_type, match_id")
+      .eq("user_id", p.user_id)
+      .eq("campaign_id", match.campaign_id)
+      .eq("week_number", matchWeekNumber)
+      .maybeSingle();
+    let finalPts = pts;
+    const tcChip = chipActive?.chip_type === "triple_captain" && chipActive?.match_id === matchId;
+    const ddChip = chipActive?.chip_type === "double_down";
+    if (pts > 0) {
+      if (tcChip) finalPts = pts * 3;
+      else if (ddChip) finalPts = pts * 2;
+    }
+
     await supabase
       .from("predictions")
-      .update({ points_awarded: pts, scored: true })
+      .update({ points_awarded: finalPts, scored: true })
       .eq("id", p.id);
 
     const u = p.user as any;
@@ -356,7 +517,7 @@ async function rescoreMatch(matchId: string) {
     const actualScore = `${match.home_score}-${match.away_score}`;
     const predictedScore = `${p.predicted_home_score}-${p.predicted_away_score}`;
 
-    queueEvent(p.user_id, pts > 0 ? "prediction_correct" : "prediction_incorrect", {
+    queueEvent(p.user_id, finalPts > 0 ? "prediction_correct" : "prediction_incorrect", {
       email: u?.email,
       name: u?.name || "",
       match_id: match.id,
@@ -367,9 +528,10 @@ async function rescoreMatch(matchId: string) {
       predicted_first_to_score_team_id: p.predicted_first_to_score_team_id,
       actual_home: match.home_score,
       actual_away: match.away_score,
-      points_earned: pts,
+      points_earned: finalPts,
+      triple_captain: !!tcChip,
       backed_team_id: u?.backed_team_id || null,
-    }, pts > 0 ? {
+    }, finalPts > 0 ? {
       firstName: deriveFirstName(u?.name, u?.username, u?.email || ""),
       teamA: homeTeam,
       teamB: awayTeam,
@@ -378,8 +540,9 @@ async function rescoreMatch(matchId: string) {
       matchResultPoints,
       firstGoalscorerPoints,
       exactScorelinePoints,
-      pointsEarned: pts,
-      totalPoints: pts,
+      pointsEarned: finalPts,
+      totalPoints: finalPts,
+      tripleCaptain: !!tcChip,
       leaderboardLink: `${APP_BASE_URL}/leaderboard`,
     } : {
       firstName: deriveFirstName(u?.name, u?.username, u?.email || ""),
@@ -390,7 +553,7 @@ async function rescoreMatch(matchId: string) {
       predictLink: `${APP_BASE_URL}/predict`,
     });
 
-    pulseTrack(u?.email || p.user_id, pts > 0 ? "prediction_scored_correct" : "prediction_scored_incorrect", {
+    pulseTrack(u?.email || p.user_id, finalPts > 0 ? "prediction_scored_correct" : "prediction_scored_incorrect", {
       user_id: p.user_id,
       email: u?.email || null,
       match_id: match.id,
@@ -406,23 +569,24 @@ async function rescoreMatch(matchId: string) {
       match_result_points: matchResultPoints,
       first_goalscorer_points: firstGoalscorerPoints,
       exact_scoreline_points: exactScorelinePoints,
-      total_points_earned: pts,
+      total_points_earned: finalPts,
+      triple_captain: !!tcChip,
       backed_team_id: u?.backed_team_id || null,
     });
 
     // In-app notification
-    const notifTitle = pts > 0
-      ? `+${pts} points! ${homeTeam} ${actualScore} ${awayTeam}`
+    const notifTitle = finalPts > 0
+      ? `+${finalPts} points${tcChip ? ' (3x Triple Captain!)' : ''} ${homeTeam} ${actualScore} ${awayTeam}`
       : `${homeTeam} ${actualScore} ${awayTeam} - No points`;
-    const notifBody = pts > 0
-      ? `Your prediction (${predictedScore}) earned you ${pts} points.`
+    const notifBody = finalPts > 0
+      ? `Your prediction (${predictedScore}) earned you ${finalPts} points.${tcChip ? ' Triple Captain active!' : ''}`
       : `Your prediction (${predictedScore}) didn't score this time. Keep going!`;
     await supabase.from("notifications").insert({
       user_id: p.user_id,
-      type: pts > 0 ? "prediction_correct" : "prediction_incorrect",
+      type: finalPts > 0 ? "prediction_correct" : "prediction_incorrect",
       title: notifTitle,
       body: notifBody,
-      metadata: { match_id: match.id, points: pts, actual_score: actualScore, predicted_score: predictedScore },
+      metadata: { match_id: match.id, points: finalPts, triple_captain: !!tcChip, actual_score: actualScore, predicted_score: predictedScore },
     });
   }
 
@@ -522,6 +686,9 @@ async function rescoreMatch(matchId: string) {
     await refreshUserCounters(uid);
   }
 
+  // Update streaks and check milestone rewards
+  await updateStreaksAndMilestones(match, preds);
+
   // Auto-eliminate the loser in knockout stages
   const KNOCKOUT_STAGES = new Set(["round_of_16", "round_of_32", "quarter_final", "semi_final", "final"]);
   if (KNOCKOUT_STAGES.has(match.stage) && winnerId) {
@@ -535,6 +702,29 @@ async function rescoreMatch(matchId: string) {
   // After group stage completes, eliminate teams that didn't advance
   if (match.stage === "group") {
     await eliminateGroupStageTeams();
+  }
+
+  // Try to resolve side quests if all matches in this matchweek are done
+  if (match.matchweek && match.campaign_id) {
+    const { data: weekMatches } = await supabase
+      .from("matches")
+      .select("id, status")
+      .eq("campaign_id", match.campaign_id)
+      .eq("matchweek", match.matchweek);
+    const allDone = weekMatches?.every((m) => m.status === "completed");
+    if (allDone) {
+      try {
+        const resolveUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/side-quests/resolve`;
+        await fetch(resolveUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({ matchweek: match.matchweek }),
+        });
+      } catch { /* best-effort side quest resolution */ }
+    }
   }
 
   // Flush all queued emails in batches
@@ -551,25 +741,57 @@ async function importFixtures(league: number, season: number) {
     );
   }
 
-  await supabase.from("predictions").delete().gt("created_at", "1900-01-01");
-  await supabase.from("sweep_results").delete().gt("created_at", "1900-01-01");
-  await supabase.from("matches").delete().gt("created_at", "1900-01-01");
-  await supabase.from("teams").delete().gt("created_at", "1900-01-01");
-  await supabase.from("synced_users").update({
+  // Find the campaign matching this league/season
+  const { data: campaign } = await supabase
+    .from("campaigns")
+    .select("id")
+    .eq("api_football_league_id", league)
+    .eq("api_football_season", season)
+    .maybeSingle();
+
+  const campaignId = campaign?.id;
+  if (!campaignId) {
+    throw new Error(
+      `No campaign found for league=${league} season=${season}. Create a campaign first.`,
+    );
+  }
+
+  // Get match IDs belonging to this campaign only
+  const { data: campaignMatches } = await supabase
+    .from("matches")
+    .select("id")
+    .eq("campaign_id", campaignId);
+  const campaignMatchIds = (campaignMatches || []).map((m: any) => m.id);
+
+  // Delete only predictions for this campaign's matches
+  if (campaignMatchIds.length > 0) {
+    for (let i = 0; i < campaignMatchIds.length; i += 200) {
+      const batch = campaignMatchIds.slice(i, i + 200);
+      await supabase.from("predictions").delete().in("match_id", batch);
+    }
+    await supabase.from("sweep_results").delete().eq("campaign_id", campaignId);
+  }
+
+  // Delete only this campaign's matches and team links
+  await supabase.from("matches").delete().eq("campaign_id", campaignId);
+  await supabase.from("campaign_teams").delete().eq("campaign_id", campaignId);
+
+  // Reset only this campaign's participants (not global synced_users)
+  await supabase.from("campaign_participants").update({
     total_points: 0,
     correct_predictions_count: 0,
     exact_scorelines_count: 0,
     backed_team_id: null,
     updated_at: new Date().toISOString(),
-  }).gt("created_at", "1900-01-01");
+  }).eq("campaign_id", campaignId);
 
-  const uniqueTeams = new Map<number, { name: string; group: string }>();
+  const uniqueTeams = new Map<number, { name: string; group: string; logo: string }>();
   for (const f of apiFixtures) {
     const grp = deriveGroup(f.league.round);
     for (const t of [f.teams.home, f.teams.away]) {
       const existing = uniqueTeams.get(t.id);
       if (!existing) {
-        uniqueTeams.set(t.id, { name: t.name, group: grp });
+        uniqueTeams.set(t.id, { name: t.name, group: grp, logo: t.logo || '' });
       } else if (!existing.group && grp) {
         existing.group = grp;
       }
@@ -592,6 +814,7 @@ async function importFixtures(league: number, season: number) {
       name: t.name,
       code,
       flag_emoji: flagFor(t.name),
+      logo_url: t.logo || `https://media.api-sports.io/football/teams/${id}.png`,
       group_name: t.group,
     };
   });
@@ -614,13 +837,27 @@ async function importFixtures(league: number, season: number) {
     away_team_id: teamIdByApiId.get(f.teams.away.id)!,
     kickoff_at: f.fixture.date,
     stage: deriveStage(f.league.round),
+    matchweek: deriveMatchweek(f.league.round),
     status: COMPLETED_STATUSES.has(f.fixture.status.short) ? "completed" : "scheduled",
     home_score: COMPLETED_STATUSES.has(f.fixture.status.short) ? f.goals.home : null,
     away_score: COMPLETED_STATUSES.has(f.fixture.status.short) ? f.goals.away : null,
+    campaign_id: campaignId,
   }));
 
   const { error: matchErr } = await supabase.from("matches").insert(matchRows);
   if (matchErr) throw new Error(`Match insert failed: ${matchErr.message}`);
+
+  // Also create campaign_teams entries
+  if (campaignId) {
+    const ctRows = (insertedTeams || []).map((t: any) => ({
+      campaign_id: campaignId,
+      team_id: t.id,
+      group_name: teamRows.find((tr: any) => tr.api_football_id === t.api_football_id)?.group_name || '',
+    }));
+    if (ctRows.length) {
+      await supabase.from("campaign_teams").upsert(ctRows, { onConflict: "campaign_id,team_id" });
+    }
+  }
 
   return {
     teams_imported: teamRows.length,
@@ -629,9 +866,21 @@ async function importFixtures(league: number, season: number) {
 }
 
 async function syncResults(league: number, season: number) {
-  const { data: dbMatches } = await supabase
+  // Scope to the campaign matching this league/season
+  const { data: targetCampaign } = await supabase
+    .from("campaigns")
+    .select("id")
+    .eq("api_football_league_id", league)
+    .eq("api_football_season", season)
+    .maybeSingle();
+
+  let matchQuery = supabase
     .from("matches")
     .select("*, home_team:teams!matches_home_team_id_fkey(*), away_team:teams!matches_away_team_id_fkey(*)");
+  if (targetCampaign?.id) {
+    matchQuery = matchQuery.eq("campaign_id", targetCampaign.id);
+  }
+  const { data: dbMatches } = await matchQuery;
 
   if (!dbMatches || dbMatches.length === 0) {
     return { updated: [], skipped: [], finished_fixtures: 0 };
@@ -713,11 +962,57 @@ async function syncResults(league: number, season: number) {
       continue;
     }
 
+    await recordGoalscorers(dbMatch, events);
     await rescoreMatch(dbMatch.id);
     updated.push(`${dbMatch.home_team.code} ${fixture.goals.home}-${fixture.goals.away} ${dbMatch.away_team.code}`);
   }
 
   return { updated, skipped, finished_fixtures: finished.length };
+}
+
+async function recordGoalscorers(dbMatch: any, events: ApiEvent[]) {
+  const teamIdByApiId = new Map<number, string>();
+  if (dbMatch.home_team?.api_football_id) teamIdByApiId.set(dbMatch.home_team.api_football_id, dbMatch.home_team_id);
+  if (dbMatch.away_team?.api_football_id) teamIdByApiId.set(dbMatch.away_team.api_football_id, dbMatch.away_team_id);
+
+  // Aggregate goals per scoring player (skip own goals and shootout penalties)
+  const byPlayer = new Map<string, { name: string; api_id: number | null; team_id: string | null; goals: number }>();
+  for (const e of events) {
+    if (e.type !== "Goal") continue;
+    if (e.detail && e.detail.toLowerCase() === "own goal") continue;
+    if (e.comments && e.comments.toLowerCase().includes("penalty shootout")) continue;
+    const name = (e.player?.name || "").trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    const existing = byPlayer.get(key);
+    if (existing) {
+      existing.goals += 1;
+    } else {
+      byPlayer.set(key, {
+        name,
+        api_id: e.player?.id ?? null,
+        team_id: (e.team?.id && teamIdByApiId.get(e.team.id)) || null,
+        goals: 1,
+      });
+    }
+  }
+
+  if (byPlayer.size === 0) return;
+
+  const rows = Array.from(byPlayer.values()).map((p) => ({
+    match_id: dbMatch.id,
+    campaign_id: dbMatch.campaign_id ?? null,
+    team_id: p.team_id,
+    player_api_id: p.api_id,
+    player_name: p.name,
+    goals: p.goals,
+    updated_at: new Date().toISOString(),
+  }));
+
+  const { error } = await supabase
+    .from("match_goalscorers")
+    .upsert(rows, { onConflict: "match_id,player_name" });
+  if (error) console.error("recordGoalscorers failed:", error.message);
 }
 
 async function ensureTruthEvents(matchId: string, apiFixtureId: number | null) {
@@ -1056,12 +1351,12 @@ async function syncFixtures(league: number, season: number) {
     return { added_teams: 0, added_matches: 0, skipped_existing: skippedExisting };
   }
 
-  const newTeams = new Map<number, { name: string; group: string }>();
+  const newTeams = new Map<number, { name: string; group: string; logo: string }>();
   for (const f of newFixtures) {
     const grp = deriveGroup(f.league.round);
     for (const t of [f.teams.home, f.teams.away]) {
       if (!teamIdByApiId.has(t.id) && !newTeams.has(t.id)) {
-        newTeams.set(t.id, { name: t.name, group: grp });
+        newTeams.set(t.id, { name: t.name, group: grp, logo: t.logo || '' });
       }
     }
   }
@@ -1083,6 +1378,7 @@ async function syncFixtures(league: number, season: number) {
         name: t.name,
         code,
         flag_emoji: flagFor(t.name),
+        logo_url: t.logo || `https://media.api-sports.io/football/teams/${id}.png`,
         group_name: t.group,
       };
     });
@@ -1096,17 +1392,46 @@ async function syncFixtures(league: number, season: number) {
       teamIdByApiId.set(t.api_football_id, t.id);
     }
     addedTeams = teamRows.length;
+
+    // Link new teams to the campaign matching this league/season
+    const { data: targetCampaign } = await supabase
+      .from("campaigns")
+      .select("id")
+      .eq("api_football_league_id", league)
+      .eq("api_football_season", season)
+      .maybeSingle();
+    const ctCampaignId = targetCampaign?.id;
+    if (ctCampaignId && inserted?.length) {
+      const ctRows = (inserted || []).map((t: any) => ({
+        campaign_id: ctCampaignId,
+        team_id: t.id,
+        group_name: teamRows.find((tr: any) => tr.api_football_id === t.api_football_id)?.group_name || '',
+      }));
+      if (ctRows.length) {
+        await supabase.from("campaign_teams").upsert(ctRows, { onConflict: "campaign_id,team_id" });
+      }
+    }
   }
 
+  // Look up campaign by league/season to scope match insertion
+  const { data: matchCampaign } = await supabase
+    .from("campaigns")
+    .select("id")
+    .eq("api_football_league_id", league)
+    .eq("api_football_season", season)
+    .maybeSingle();
+  const syncCampaignId = matchCampaign?.id || null;
   const matchRows = newFixtures.map((f) => ({
     api_football_id: f.fixture.id,
     home_team_id: teamIdByApiId.get(f.teams.home.id)!,
     away_team_id: teamIdByApiId.get(f.teams.away.id)!,
     kickoff_at: f.fixture.date,
     stage: deriveStage(f.league.round),
+    matchweek: deriveMatchweek(f.league.round),
     status: COMPLETED_STATUSES.has(f.fixture.status.short) ? "completed" : "scheduled",
     home_score: COMPLETED_STATUSES.has(f.fixture.status.short) ? f.goals.home : null,
     away_score: COMPLETED_STATUSES.has(f.fixture.status.short) ? f.goals.away : null,
+    campaign_id: syncCampaignId,
   }));
 
   const { error: matchErr } = await supabase.from("matches").insert(matchRows);

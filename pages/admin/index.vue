@@ -10,7 +10,7 @@ const canManageFixtures = computed(() => hasPermission('manage_fixtures'))
 const canViewPayouts = computed(() => hasPermission('view_payouts'))
 const canManageAdmins = computed(() => hasPermission('manage_admins'))
 
-type Tab = 'campaign' | 'fixtures' | 'results' | 'payouts' | 'teams' | 'users' | 'reports' | 'admins'
+type Tab = 'campaign' | 'fixtures' | 'results' | 'payouts' | 'teams' | 'users' | 'reports' | 'admins' | 'quests'
 
 const tabs = computed<Array<{ key: Tab; label: string; show: boolean }>>(() => [
   { key: 'campaign', label: 'Campaign', show: true },
@@ -20,6 +20,7 @@ const tabs = computed<Array<{ key: Tab; label: string; show: boolean }>>(() => [
   { key: 'teams', label: 'Teams', show: canManageResults.value },
   { key: 'users', label: 'Users', show: true },
   { key: 'reports', label: 'Reports', show: true },
+  { key: 'quests', label: 'Side Quests', show: true },
   { key: 'admins', label: 'Admins', show: canManageAdmins.value },
 ])
 
@@ -58,21 +59,21 @@ const executeConfirm = async () => {
 }
 
 // --- Campaign Config ---
-const campaignConfig = ref<{ predictions_enabled: boolean; leaderboard_enabled: boolean; team_picking_enabled: boolean; campaign_name: string; week_start_date: string; prediction_lock_minutes: number } | null>(null)
+const campaignConfig = ref<Record<string, any> | null>(null)
 const campaignLoading = ref(false)
 
 const loadCampaignConfig = async () => {
   campaignLoading.value = true
   const { data } = await supabase
-    .from('campaign_config')
+    .from('campaigns')
     .select('*')
-    .eq('id', 1)
+    .eq('is_active', true)
     .maybeSingle()
   campaignConfig.value = data
   campaignLoading.value = false
 }
 
-const toggleCampaignField = async (field: 'predictions_enabled' | 'leaderboard_enabled' | 'team_picking_enabled') => {
+const toggleCampaignField = async (field: 'predictions_enabled' | 'leaderboard_enabled' | 'team_picking_enabled' | 'public_access_enabled' | 'require_eligibility_leaderboard' | 'require_eligibility_chips') => {
   if (!campaignConfig.value) return
   const newVal = !campaignConfig.value[field]
   campaignLoading.value = true
@@ -94,7 +95,7 @@ const updateCampaignName = async () => {
   try {
     await call('campaign-config-update', {
       admin_email: admin.value!.email,
-      fields: { campaign_name: campaignConfig.value.campaign_name },
+      fields: { name: campaignConfig.value.name },
     })
   } catch (err: any) {
     error.value = `Failed to update campaign name: ${err.message}`
@@ -130,10 +131,576 @@ const updatePredictionLockMinutes = async () => {
   campaignLoading.value = false
 }
 
+const updateChipConfig = async () => {
+  if (!campaignConfig.value) return
+  campaignLoading.value = true
+  try {
+    await call('campaign-config-update', {
+      admin_email: admin.value!.email,
+      fields: {
+        max_double_down_uses: campaignConfig.value.max_double_down_uses,
+        max_triple_captain_uses: campaignConfig.value.max_triple_captain_uses,
+        max_first_blood_uses: campaignConfig.value.max_first_blood_uses,
+        max_streak_shield_uses: campaignConfig.value.max_streak_shield_uses,
+        max_last_stand_uses: campaignConfig.value.max_last_stand_uses,
+        max_perfect_week_uses: campaignConfig.value.max_perfect_week_uses,
+        total_matchweeks: campaignConfig.value.total_matchweeks,
+      },
+    })
+  } catch (err: any) {
+    error.value = `Failed to update chip config: ${err.message}`
+  }
+  campaignLoading.value = false
+}
+
+const updateScoringConfig = async () => {
+  if (!campaignConfig.value) return
+  campaignLoading.value = true
+  try {
+    await call('campaign-config-update', {
+      admin_email: admin.value!.email,
+      fields: {
+        scoring_result: campaignConfig.value.scoring_result,
+        scoring_first_to_score: campaignConfig.value.scoring_first_to_score,
+        scoring_exact_ft: campaignConfig.value.scoring_exact_ft,
+        scoring_exact_aet: campaignConfig.value.scoring_exact_aet,
+        scoring_exact_pen: campaignConfig.value.scoring_exact_pen,
+        upset_multiplier_enabled: campaignConfig.value.upset_multiplier_enabled,
+        upset_multiplier_favourite: campaignConfig.value.upset_multiplier_favourite,
+        upset_multiplier_draw: campaignConfig.value.upset_multiplier_draw,
+        upset_multiplier_underdog: campaignConfig.value.upset_multiplier_underdog,
+      },
+    })
+  } catch (err: any) {
+    error.value = `Failed to update scoring config: ${err.message}`
+  }
+  campaignLoading.value = false
+}
+
+// --- Streak Milestones ---
+const milestones = ref<Array<{ id: string; threshold: number; bonus_points: number }>>([])
+const milestonesLoading = ref(false)
+const newMilestoneThreshold = ref<number | null>(null)
+const newMilestonePoints = ref<number | null>(null)
+
+const loadMilestones = async () => {
+  if (!campaignConfig.value) return
+  milestonesLoading.value = true
+  const { data } = await supabase
+    .from('streak_milestones')
+    .select('id, threshold, bonus_points')
+    .eq('campaign_id', campaignConfig.value.id)
+    .order('threshold', { ascending: true })
+  milestones.value = data || []
+  milestonesLoading.value = false
+}
+
+const addMilestone = async () => {
+  if (!campaignConfig.value || !newMilestoneThreshold.value || !newMilestonePoints.value) return
+  milestonesLoading.value = true
+  const { error: err } = await supabase.from('streak_milestones').insert({
+    campaign_id: campaignConfig.value.id,
+    threshold: newMilestoneThreshold.value,
+    bonus_points: newMilestonePoints.value,
+  })
+  if (err) {
+    error.value = `Failed to add milestone: ${err.message}`
+  } else {
+    newMilestoneThreshold.value = null
+    newMilestonePoints.value = null
+  }
+  await loadMilestones()
+  milestonesLoading.value = false
+}
+
+const removeMilestone = async (id: string) => {
+  milestonesLoading.value = true
+  await supabase.from('streak_milestones').delete().eq('id', id)
+  await loadMilestones()
+  milestonesLoading.value = false
+}
+
+watch(campaignConfig, (cfg) => {
+  if (cfg) loadMilestones()
+}, { immediate: true })
+
+// --- Side Quests ---
+const sideQuests = ref<any[]>([])
+const sideQuestsLoading = ref(false)
+const generateWeek = ref<number | null>(null)
+const generateResult = ref<string | null>(null)
+const newQuestTitle = ref('')
+const newQuestType = ref('total_goals_over_under')
+const newQuestMatchweek = ref<number | null>(null)
+const newQuestPoints = ref(10)
+const newQuestOptions = ref('')
+const newQuestLocksAt = ref('')
+const newQuestLineupLock = ref(false)
+
+// Sub-panels so the quests tab isn't one long scroll
+const questPanel = ref<'suggest' | 'custom' | 'manage' | 'tools'>('suggest')
+
+// Suggested quests (preview -> review -> publish)
+const suggestWeek = ref<number | null>(null)
+const suggesting = ref(false)
+const publishing = ref(false)
+const suggestNote = ref<string | null>(null)
+const suggestedQuests = ref<Array<any & { include: boolean }>>([])
+
+const suggestQuests = async () => {
+  if (!suggestWeek.value) return
+  suggesting.value = true
+  suggestNote.value = null
+  suggestedQuests.value = []
+  try {
+    const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/side-quests/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+      body: JSON.stringify({ matchweek: suggestWeek.value }),
+    })
+    const data = await res.json()
+    if (!res.ok) { suggestNote.value = `Error: ${data.error || 'Could not build suggestions'}`; return }
+    const list = Array.isArray(data.quests) ? data.quests : []
+    if (!list.length) { suggestNote.value = `Nothing new to suggest for MW ${suggestWeek.value} — every standard quest type already exists.`; return }
+    suggestedQuests.value = list.map((q: any) => ({ ...q, include: true }))
+  } catch (err: any) {
+    suggestNote.value = `Error: ${err.message}`
+  } finally {
+    suggesting.value = false
+  }
+}
+
+const publishSuggested = async () => {
+  if (!admin.value) return
+  const chosen = suggestedQuests.value.filter((q) => q.include)
+  if (!chosen.length) return
+  publishing.value = true
+  suggestNote.value = null
+  try {
+    const quests = chosen.map((q) => ({
+      matchweek: q.matchweek ?? suggestWeek.value ?? null,
+      quest_type: q.quest_type,
+      title: q.title,
+      description: q.description || '',
+      options: q.options,
+      options_meta: q.options_meta || {},
+      point_value: Math.max(1, Number(q.point_value) || 10),
+      locks_at: q.locks_at ?? null,
+    }))
+    const res = await call('side-quests/publish', { admin_email: admin.value.email, quests })
+    suggestNote.value = `Published ${res.published} quest${res.published === 1 ? '' : 's'} for MW ${suggestWeek.value}.`
+    suggestedQuests.value = []
+    await loadSideQuests()
+  } catch (err: any) {
+    suggestNote.value = `Error: ${err.message}`
+  } finally {
+    publishing.value = false
+  }
+}
+
+const optionPresets: Array<{ label: string; value: string }> = [
+  { label: 'Yes / No', value: 'Yes, No' },
+  { label: 'Over / Under', value: 'Over, Under' },
+  { label: 'Home / Draw / Away', value: 'Home, Draw, Away' },
+  { label: 'Count 0–5+', value: '0, 1, 2, 3, 4, 5+' },
+]
+
+const questMode = ref<'text' | 'players' | 'player_score'>('text')
+const questTeams = ref<Array<{ id: string; name: string; logo_url: string | null }>>([])
+const questTeamId = ref('')
+const questTeamPlayers = ref<Array<{ id: string; name: string; position: string | null; photo_url: string | null; api_football_id: number | null; team_id: string }>>([])
+const questPlayersLoading = ref(false)
+const questSelectedPlayers = ref<Array<{ id: string; name: string; photo_url: string | null; team_name: string; api_football_id: number | null; team_id: string }>>([])
+
+const loadQuestTeams = async () => {
+  if (!campaignConfig.value?.id || questTeams.value.length) return
+  const { data } = await supabase
+    .from('campaign_teams')
+    .select('team:teams!campaign_teams_team_id_fkey(id, name, logo_url)')
+    .eq('campaign_id', campaignConfig.value.id)
+  questTeams.value = (data || [])
+    .map((r: any) => r.team)
+    .filter(Boolean)
+    .sort((a: any, b: any) => a.name.localeCompare(b.name))
+}
+
+const loadTeamPlayers = async () => {
+  questTeamPlayers.value = []
+  if (!campaignConfig.value?.id || !questTeamId.value) return
+  questPlayersLoading.value = true
+  const { data } = await supabase
+    .from('players')
+    .select('id, name, position, photo_url, api_football_id, team_id')
+    .eq('campaign_id', campaignConfig.value.id)
+    .eq('team_id', questTeamId.value)
+    .eq('active', true)
+    .order('name', { ascending: true })
+  questTeamPlayers.value = data || []
+  questPlayersLoading.value = false
+}
+
+watch(questTeamId, loadTeamPlayers)
+
+const isPlayerSelected = (id: string) => questSelectedPlayers.value.some((p) => p.id === id)
+
+const togglePlayerOption = (player: { id: string; name: string; photo_url: string | null; api_football_id?: number | null; team_id?: string }) => {
+  const idx = questSelectedPlayers.value.findIndex((p) => p.id === player.id)
+  if (idx >= 0) {
+    questSelectedPlayers.value.splice(idx, 1)
+    return
+  }
+  const teamName = questTeams.value.find((t) => t.id === questTeamId.value)?.name || ''
+  const entry = {
+    id: player.id,
+    name: player.name,
+    photo_url: player.photo_url,
+    team_name: teamName,
+    api_football_id: player.api_football_id ?? null,
+    team_id: player.team_id ?? questTeamId.value,
+  }
+  // In single-player mode only one player can be selected at a time.
+  if (questMode.value === 'player_score') {
+    questSelectedPlayers.value = [entry]
+  } else {
+    questSelectedPlayers.value.push(entry)
+  }
+}
+
+const loadSideQuests = async () => {
+  if (!campaignConfig.value) return
+  sideQuestsLoading.value = true
+  const { data } = await supabase
+    .from('side_quests')
+    .select('*')
+    .eq('campaign_id', campaignConfig.value.id)
+    .order('matchweek', { ascending: false, nullsFirst: false })
+    .order('created_at', { ascending: false })
+    .limit(50)
+  sideQuests.value = data || []
+  sideQuestsLoading.value = false
+}
+
+const generateQuests = async () => {
+  if (!generateWeek.value) return
+  sideQuestsLoading.value = true
+  generateResult.value = null
+  try {
+    const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/side-quests/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+      body: JSON.stringify({ matchweek: generateWeek.value }),
+    })
+    const data = await res.json()
+    generateResult.value = data.generated ? `Generated ${data.generated} quests for MW ${generateWeek.value}` : (data.message || 'No quests generated')
+    await loadSideQuests()
+  } catch (err: any) {
+    generateResult.value = `Error: ${err.message}`
+  }
+  sideQuestsLoading.value = false
+}
+
+const h2hWeek = ref<number | null>(null)
+const h2hLoading = ref(false)
+const h2hResult = ref<string | null>(null)
+const h2hOptInCount = ref<number | null>(null)
+
+watch(h2hWeek, async (week) => {
+  h2hOptInCount.value = null
+  if (!week || !campaignConfig.value?.id) return
+  const { count } = await supabase.from('h2h_optins')
+    .select('id', { count: 'exact', head: true })
+    .eq('campaign_id', campaignConfig.value.id)
+    .eq('week_number', week)
+  h2hOptInCount.value = count || 0
+})
+
+const h2hConfigSaved = ref(false)
+const updateH2HConfig = async () => {
+  if (!campaignConfig.value) return
+  campaignLoading.value = true
+  h2hConfigSaved.value = false
+  try {
+    await call('campaign-config-update', {
+      admin_email: admin.value!.email,
+      fields: { h2h_weekly_limit: campaignConfig.value.h2h_weekly_limit || 0 },
+    })
+    h2hConfigSaved.value = true
+  } catch (err: any) {
+    error.value = `Failed to update H2H limit: ${err.message}`
+  }
+  campaignLoading.value = false
+}
+
+const syncPlayersLoading = ref(false)
+const syncPlayersResult = ref<string | null>(null)
+
+const syncPlayers = async (force = false) => {
+  if (!campaignConfig.value?.id) return
+  syncPlayersLoading.value = true
+  syncPlayersResult.value = null
+  try {
+    const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sync-players`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+      body: JSON.stringify({ campaign_id: campaignConfig.value.id, force }),
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      syncPlayersResult.value = `Error: ${data.error || 'Failed to sync players'}`
+    } else {
+      const failNote = data.failures?.length ? ` (${data.failures.length} club(s) rate-limited - run again in a minute)` : ''
+      syncPlayersResult.value = `Added ${data.players_upserted} players across ${data.teams_processed} club(s), ${data.teams_skipped} already up to date${failNote}.`
+      questTeams.value = []
+    }
+  } catch (err: any) {
+    syncPlayersResult.value = `Error: ${err.message}`
+  }
+  syncPlayersLoading.value = false
+}
+
+const generateH2HPairings = async () => {
+  if (!campaignConfig.value || !h2hWeek.value) return
+  h2hLoading.value = true
+  h2hResult.value = null
+  try {
+    const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/predictions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+      body: JSON.stringify({ route: 'generate-h2h', email: admin.value!.email, campaign_id: campaignConfig.value.id, week_number: h2hWeek.value }),
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      h2hResult.value = `Error: ${data.error || 'Failed to generate pairings'}`
+    } else {
+      h2hResult.value = `Created ${data.pairings_created} matchups for week ${h2hWeek.value}${data.bye ? ' (1 player has a bye)' : ''}`
+    }
+  } catch (err: any) {
+    h2hResult.value = `Error: ${err.message}`
+  }
+  h2hLoading.value = false
+}
+
+// Compose the current form into a quest draft. Titles keep the {MW} placeholder
+// so the same draft can be saved one-off (placeholder filled) or as a reusable
+// template (placeholder preserved for the weekly suggestion engine).
+const buildQuestDraft = (): { questType: string; title: string; options: string[]; optionsMeta: Record<string, any> } | null => {
+  let options: string[]
+  let optionsMeta: Record<string, any> = {}
+  let questType = newQuestType.value
+  let title = newQuestTitle.value.trim()
+
+  if (questMode.value === 'player_score') {
+    if (questSelectedPlayers.value.length !== 1) {
+      alert('Pick exactly one player for a "will they score?" quest.')
+      return null
+    }
+    const p = questSelectedPlayers.value[0]
+    questType = 'player_to_score'
+    options = ['yes', 'no']
+    optionsMeta = {
+      labels: { yes: 'Yes', no: 'No' },
+      player: { api_id: p.api_football_id, name: p.name, photo_url: p.photo_url, team_id: p.team_id },
+    }
+    if (!title) title = `Will ${p.name} score in MW{MW}?`
+  } else if (questMode.value === 'players') {
+    if (questSelectedPlayers.value.length < 2) {
+      alert('Pick at least two players as options.')
+      return null
+    }
+    if (!title) { alert('Add a title.'); return null }
+    options = questSelectedPlayers.value.map((p) => p.id)
+    const labels: Record<string, string> = {}
+    const players: Record<string, any> = {}
+    for (const p of questSelectedPlayers.value) {
+      labels[p.id] = p.name
+      players[p.id] = { name: p.name, photo_url: p.photo_url, team_name: p.team_name }
+    }
+    optionsMeta = { labels, players }
+    questType = 'player_pick'
+  } else {
+    if (!title) { alert('Add a title.'); return null }
+    options = newQuestOptions.value.split(',').map((o) => o.trim()).filter(Boolean)
+  }
+
+  if (options.length < 2) {
+    alert('Add at least two answer options.')
+    return null
+  }
+  return { questType, title, options, optionsMeta }
+}
+
+const resetQuestForm = () => {
+  newQuestTitle.value = ''
+  newQuestOptions.value = ''
+  questSelectedPlayers.value = []
+  questTeamId.value = ''
+  newQuestLocksAt.value = ''
+  newQuestLineupLock.value = false
+}
+
+const createCustomQuest = async () => {
+  if (!admin.value) return
+  const draft = buildQuestDraft()
+  if (!draft) return
+
+  const mw = newQuestMatchweek.value || null
+  let title = draft.title
+  if (mw) title = title.replaceAll('{MW}', String(mw))
+  else title = title.replace(/\s*in MW\{MW\}/i, '').replaceAll('{MW}', '')
+
+  sideQuestsLoading.value = true
+  try {
+    await call('side-quests/create', {
+      admin_email: admin.value.email,
+      quest: {
+        matchweek: mw,
+        quest_type: draft.questType,
+        title,
+        options: draft.options,
+        options_meta: draft.optionsMeta,
+        point_value: newQuestPoints.value,
+        locks_at: newQuestLocksAt.value ? new Date(newQuestLocksAt.value).toISOString() : null,
+        lock_buffer_minutes: newQuestLineupLock.value ? 75 : 0,
+      },
+    })
+    resetQuestForm()
+    await loadSideQuests()
+  } catch (err: any) {
+    alert(`Could not create quest: ${err.message}`)
+  }
+  sideQuestsLoading.value = false
+}
+
+// --- Quest template library (reusable suggestion pool) ---
+const templates = ref<any[]>([])
+const templatesLoading = ref(false)
+const templateGlobal = ref(false)
+const templateNote = ref<string | null>(null)
+
+const loadTemplates = async () => {
+  if (!admin.value) return
+  templatesLoading.value = true
+  try {
+    const res = await call('side-quests/templates-list', { admin_email: admin.value.email })
+    templates.value = res.templates || []
+  } catch (err: any) {
+    templateNote.value = `Error: ${err.message}`
+  }
+  templatesLoading.value = false
+}
+
+const saveAsTemplate = async () => {
+  if (!admin.value) return
+  const draft = buildQuestDraft()
+  if (!draft) return
+  templateNote.value = null
+  templatesLoading.value = true
+  try {
+    await call('side-quests/template-save', {
+      admin_email: admin.value.email,
+      template: {
+        global: templateGlobal.value,
+        quest_type: draft.questType,
+        title: draft.title,
+        options: draft.options,
+        options_meta: draft.optionsMeta,
+        point_value: newQuestPoints.value,
+      },
+    })
+    templateNote.value = 'Saved to the template library. It will now appear in weekly suggestions.'
+    resetQuestForm()
+    await loadTemplates()
+  } catch (err: any) {
+    templateNote.value = `Error: ${err.message}`
+  }
+  templatesLoading.value = false
+}
+
+const toggleTemplateActive = async (t: any) => {
+  if (!admin.value) return
+  try {
+    await call('side-quests/template-save', {
+      admin_email: admin.value.email,
+      template: { ...t, global: t.campaign_id === null, active: !t.active },
+    })
+    await loadTemplates()
+  } catch (err: any) {
+    templateNote.value = `Error: ${err.message}`
+  }
+}
+
+const deleteTemplate = async (id: string) => {
+  if (!admin.value) return
+  try {
+    await call('side-quests/template-delete', { admin_email: admin.value.email, template_id: id })
+    await loadTemplates()
+  } catch (err: any) {
+    templateNote.value = `Error: ${err.message}`
+  }
+}
+
+const deleteQuest = async (id: string) => {
+  if (!admin.value) return
+  requestConfirm(
+    'Delete side quest',
+    'Are you sure you want to delete this side quest? This permanently removes the quest and cannot be undone.',
+    async () => {
+      sideQuestsLoading.value = true
+      try {
+        await call('side-quests/delete', { admin_email: admin.value!.email, quest_id: id })
+        await loadSideQuests()
+      } catch (err: any) {
+        alert(`Could not delete quest: ${err.message}`)
+      }
+      sideQuestsLoading.value = false
+    }
+  )
+}
+
+const resolvingQuest = ref<string | null>(null)
+const resolveAnswer = ref<Record<string, string>>({})
+
+const resolveQuestManually = async (questId: string) => {
+  const answer = resolveAnswer.value[questId]
+  if (!answer || !admin.value) return
+  requestConfirm(
+    'Resolve side quest',
+    'Resolving this quest will award points to everyone who answered correctly and cannot be easily undone. Please confirm the answer is correct.',
+    async () => {
+      sideQuestsLoading.value = true
+      resolvingQuest.value = questId
+      try {
+        await call('side-quests/resolve-manual', {
+          admin_email: admin.value!.email,
+          quest_id: questId,
+          answer,
+        })
+        resolveAnswer.value[questId] = ''
+        await loadSideQuests()
+      } catch (err: any) {
+        alert(`Could not resolve quest: ${err.message}`)
+      }
+      resolvingQuest.value = null
+      sideQuestsLoading.value = false
+    },
+    'warning'
+  )
+}
+
+watch(campaignConfig, (cfg) => {
+  if (cfg) loadSideQuests()
+}, { immediate: true })
+
 // --- Fixtures ---
-const leagueId = ref(1)
-const seasonYear = ref(2026)
-const searchQuery = ref('World Cup')
+const leagueId = ref(campaignConfig.value?.api_football_league_id ?? 1)
+const seasonYear = ref(campaignConfig.value?.api_football_season ?? 2026)
+
+// Sync fixture defaults when campaign config loads
+watch(campaignConfig, (cfg) => {
+  if (cfg?.api_football_league_id != null) leagueId.value = cfg.api_football_league_id
+  if (cfg?.api_football_season != null) seasonYear.value = cfg.api_football_season
+})
+const searchQuery = ref('')
 const searching = ref(false)
 const searchResults = ref<any[]>([])
 const syncing = ref(false)
@@ -267,10 +834,13 @@ const filteredMatches = computed(() => {
 
 const loadMatches = async () => {
   loading.value = true
-  const { data } = await supabase
+  let query = supabase
     .from('matches')
     .select('*, home_team:teams!matches_home_team_id_fkey(*), away_team:teams!matches_away_team_id_fkey(*)')
-    .order('kickoff_at', { ascending: true })
+  if (campaignConfig.value?.id) {
+    query = query.eq('campaign_id', campaignConfig.value.id)
+  }
+  const { data } = await query.order('kickoff_at', { ascending: true })
   matches.value = data || []
   for (const m of matches.value) {
     editStates.value[m.id] = {
@@ -282,27 +852,37 @@ const loadMatches = async () => {
   loading.value = false
 }
 
-onMounted(loadMatches)
+onMounted(async () => {
+  await loadCampaignConfig()
+  loadMatches()
+})
 
 const submit = async (matchId: string) => {
   if (!admin.value) return
   const s = editStates.value[matchId]
-  saving.value = matchId
-  error.value = ''
-  try {
-    await call('predictions/submit-result', {
-      email: admin.value.email,
-      match_id: matchId,
-      home_score: s.home,
-      away_score: s.away,
-      first_to_score_team_id: s.first,
-    })
-    await loadMatches()
-  } catch (e) {
-    error.value = (e as Error).message
-  } finally {
-    saving.value = null
-  }
+  requestConfirm(
+    'Submit match result',
+    'Submitting this result will score everyone\'s predictions for this match and cannot be easily undone. Please double-check the scores before confirming.',
+    async () => {
+      saving.value = matchId
+      error.value = ''
+      try {
+        await call('predictions/submit-result', {
+          email: admin.value!.email,
+          match_id: matchId,
+          home_score: s.home,
+          away_score: s.away,
+          first_to_score_team_id: s.first,
+        })
+        await loadMatches()
+      } catch (e) {
+        error.value = (e as Error).message
+      } finally {
+        saving.value = null
+      }
+    },
+    'warning'
+  )
 }
 
 const setMatchStatus = async (matchId: string, status: 'scheduled' | 'postponed' | 'cancelled') => {
@@ -513,13 +1093,17 @@ const exportAllWeeksCsv = () => {
 
 // --- Teams ---
 const teamsList = ref<any[]>([])
+const campaignTeamIds = ref<Set<string>>(new Set())
 const teamsLoading = ref(false)
 const teamsError = ref('')
 const teamsStatusFilter = ref<'all' | 'active' | 'eliminated'>('all')
 const teamsSearch = ref('')
 
 const filteredTeams = computed(() => {
-  let list = teamsList.value
+  // First filter to only teams belonging to the current campaign
+  let list = campaignTeamIds.value.size > 0
+    ? teamsList.value.filter((t) => campaignTeamIds.value.has(t.id))
+    : teamsList.value
   if (teamsStatusFilter.value === 'active') {
     list = list.filter((t) => !t.is_eliminated)
   } else if (teamsStatusFilter.value === 'eliminated') {
@@ -535,11 +1119,23 @@ const filteredTeams = computed(() => {
   return list
 })
 
+const loadCampaignTeamIds = async () => {
+  if (!campaignConfig.value?.id) return
+  const { data } = await supabase
+    .from('campaign_teams')
+    .select('team_id')
+    .eq('campaign_id', campaignConfig.value.id)
+  if (data) {
+    campaignTeamIds.value = new Set(data.map((r: any) => r.team_id))
+  }
+}
+
 const loadTeams = async () => {
   if (!admin.value) return
   teamsLoading.value = true
   teamsError.value = ''
   try {
+    await loadCampaignTeamIds()
     const res = await call('predictions/teams-list', { email: admin.value.email })
     teamsList.value = res.teams || []
   } catch (e) {
@@ -692,22 +1288,159 @@ const reportData = ref<{
   usersWithTeam: number
   savingsEnabled: number
   totalSavingsAmount: number
+  isTournament: boolean
   totalPredictions: number
   matchesCompleted: number
   matchesScheduled: number
   correctPredictions: number
   incorrectPredictions: number
   exactScorelines: number
-  teamDistribution: Array<{ code: string; name: string; flag_emoji: string; count: number }>
+  teamDistribution: Array<{ code: string; name: string; flag_emoji: string; logo_url?: string; count: number }>
   dailySignups: Array<{ date: string; count: number }>
   dailyPredictions: Array<{ date: string; count: number }>
+  // Feature engagement
+  questsTotal: number
+  questsResolved: number
+  questEntriesTotal: number
+  questEntriesCorrect: number
+  h2hOptInsTotal: number
+  h2hPairingsTotal: number
+  h2hCompleted: number
+  h2hPlayers: number
+  chipsTotal: number
+  chipsByType: Array<{ type: string; count: number }>
+  streakUsers: number
+  longestCurrentStreak: number
+  longestEverStreak: number
+  groupsTotal: number
+  groupMembersTotal: number
+  playersRoster: number
 } | null>(null)
+
+type ReportPanel = 'overview' | 'participation' | 'savings' | 'leagues' | 'audit'
+const reportPanel = ref<ReportPanel>('overview')
+const reportPanels: Array<{ key: ReportPanel; label: string }> = [
+  { key: 'overview', label: 'Overview' },
+  { key: 'participation', label: 'Participation' },
+  { key: 'savings', label: 'Savings' },
+  { key: 'leagues', label: 'Private leagues' },
+  { key: 'audit', label: 'Timestamp audit' },
+]
+const namedReportLoading = ref(false)
+const namedReportError = ref('')
+const auditMatchweek = ref('')
+const participationReport = ref<any>(null)
+const savingsReport = ref<any>(null)
+const leaguesReport = ref<any>(null)
+const auditReport = ref<any>(null)
+
+const loadNamedReport = async (panel: Exclude<ReportPanel, 'overview'>) => {
+  if (!admin.value) return
+  namedReportLoading.value = true
+  namedReportError.value = ''
+  try {
+    const body: Record<string, unknown> = { admin_email: admin.value.email }
+    if (panel === 'audit' && auditMatchweek.value) body.matchweek = auditMatchweek.value
+    const res: any = await call('reports/' + panel, body)
+    const report = res?.report
+    if (!report) throw new Error('No data returned')
+    if (panel === 'participation') participationReport.value = report
+    else if (panel === 'savings') savingsReport.value = report
+    else if (panel === 'leagues') leaguesReport.value = report
+    else if (panel === 'audit') auditReport.value = report
+  } catch (err: any) {
+    namedReportError.value = err?.message || 'Failed to load report'
+  } finally {
+    namedReportLoading.value = false
+  }
+}
+
+const openReportPanel = (panel: ReportPanel) => {
+  reportPanel.value = panel
+  if (panel === 'overview') {
+    if (!reportData.value) loadReports()
+    return
+  }
+  loadNamedReport(panel)
+}
+
+const downloadReportCsv = (filename: string, rows: Array<Record<string, any>>) => {
+  if (!rows.length) return
+  const headers = Object.keys(rows[0])
+  const csv = [headers.join(',')]
+    .concat(rows.map((r) => headers.map((h) => csvCell(r[h] ?? '')).join(',')))
+    .join('\n')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+const exportParticipationCsv = () => {
+  const r = participationReport.value
+  if (!r) return
+  downloadReportCsv('participation-by-gameweek.csv', (r.by_week || []).map((w: any) => ({
+    matchweek: w.matchweek,
+    active_predictors: w.active_predictors,
+    new_predictors: w.new_predictors,
+    returning_predictors: w.returning_predictors,
+  })))
+}
+
+const exportSavingsCsv = () => {
+  const r = savingsReport.value
+  if (!r) return
+  downloadReportCsv('savings-recent-triggers.csv', (r.recent || []).map((x: any) => ({
+    triggered_at: x.triggered_at,
+    username: x.username || '',
+    action: x.action || '',
+    status: x.status,
+    amount: x.amount ?? '',
+    failure_reason: x.failure_reason || '',
+  })))
+}
+
+const exportAuditCsv = () => {
+  const r = auditReport.value
+  if (!r) return
+  downloadReportCsv('timestamp-audit-log.csv', (r.rows || []).map((x: any) => ({
+    username: x.username || '',
+    email: x.email || '',
+    matchweek: x.matchweek,
+    fixture: x.fixture,
+    predicted_at: x.predicted_at,
+    last_updated_at: x.last_updated_at,
+    points_awarded: x.points_awarded ?? '',
+    power_ups: x.power_ups || '',
+  })))
+}
+
+const exportAuditRankingCsv = () => {
+  const r = auditReport.value
+  if (!r) return
+  downloadReportCsv('leaderboard-tiebreak-ranking.csv', (r.ranking || []).map((x: any, i: number) => ({
+    rank: i + 1,
+    username: x.username || '',
+    email: x.email || '',
+    total_points: x.total_points,
+    predictions_count: x.predictions_count,
+    first_prediction_at: x.first_prediction_at,
+    last_prediction_at: x.last_prediction_at,
+    cumulative_timestamp_epoch: x.cumulative_timestamp_epoch,
+  })))
+}
 
 const loadReports = async () => {
   reportLoading.value = true
   try {
     const from = reportDateFrom.value || null
     const to = reportDateTo.value ? reportDateTo.value + 'T23:59:59' : null
+    const cid = campaignConfig.value?.id || null
+    // Auto-savings and national-team backing were World Cup mechanics with no league equivalent.
+    const isTournamentCampaign = campaignConfig.value?.competition_type === 'tournament'
 
     let usersQuery = supabase.from('synced_users').select('*', { count: 'exact', head: true })
     if (from) usersQuery = usersQuery.gte('created_at', from)
@@ -734,51 +1467,99 @@ const loadReports = async () => {
     if (to) teamQuery = teamQuery.lte('created_at', to)
     const { count: usersWithTeam } = await teamQuery
 
-    let savingsQuery = supabase.from('synced_users').select('*', { count: 'exact', head: true }).eq('auto_savings_enabled', true)
-    if (from) savingsQuery = savingsQuery.gte('created_at', from)
-    if (to) savingsQuery = savingsQuery.lte('created_at', to)
-    const { count: savingsEnabled } = await savingsQuery
+    // Campaign-scoped user counts (this campaign only, via participants)
+    let campaignUsers = 0
+    let campaignWithAccount = 0
+    let campaignGuests = 0
+    let campaignActive = 0
+    if (cid) {
+      const partBase = () => supabase.from('campaign_participants').select('*, synced_users!inner(account_number, active_customer_flag)', { count: 'exact', head: true }).eq('campaign_id', cid)
+      const { count: cuTotal } = await partBase()
+      campaignUsers = cuTotal || 0
+      const { count: cuAcct } = await partBase().not('synced_users.account_number', 'is', null)
+      campaignWithAccount = cuAcct || 0
+      const { count: cuGuest } = await partBase().is('synced_users.account_number', null)
+      campaignGuests = cuGuest || 0
+      const { count: cuActive } = await partBase().eq('synced_users.active_customer_flag', true)
+      campaignActive = cuActive || 0
+    }
 
-    let savingsAmountQuery = supabase.from('synced_users').select('auto_savings_amount').eq('auto_savings_enabled', true).not('auto_savings_amount', 'is', null)
-    if (from) savingsAmountQuery = savingsAmountQuery.gte('created_at', from)
-    if (to) savingsAmountQuery = savingsAmountQuery.lte('created_at', to)
-    const { data: savingsRows } = await savingsAmountQuery
-    const totalSavingsAmount = (savingsRows || []).reduce((sum, r) => sum + (r.auto_savings_amount || 0), 0)
+    let savingsEnabled = 0
+    let totalSavingsAmount = 0
+    const teamData: any[] = []
+    if (isTournamentCampaign) {
+      let savingsQuery = supabase.from('synced_users').select('*', { count: 'exact', head: true }).eq('auto_savings_enabled', true)
+      if (from) savingsQuery = savingsQuery.gte('created_at', from)
+      if (to) savingsQuery = savingsQuery.lte('created_at', to)
+      const { count: savingsCount } = await savingsQuery
+      savingsEnabled = savingsCount || 0
+
+      const savingsRows: Array<{ auto_savings_amount: number | null }> = []
+      {
+        const PAGE = 1000
+        let start = 0
+        while (true) {
+          let q = supabase.from('synced_users').select('auto_savings_amount').eq('auto_savings_enabled', true).not('auto_savings_amount', 'is', null)
+          if (from) q = q.gte('created_at', from)
+          if (to) q = q.lte('created_at', to)
+          const { data: page } = await q.order('id', { ascending: true }).range(start, start + PAGE - 1)
+          if (!page || page.length === 0) break
+          savingsRows.push(...page)
+          if (page.length < PAGE) break
+          start += PAGE
+        }
+      }
+      totalSavingsAmount = savingsRows.reduce((sum, r) => sum + (r.auto_savings_amount || 0), 0)
+
+      {
+        const PAGE = 1000
+        let start = 0
+        while (true) {
+          let q = supabase.from('synced_users').select('backed_team_id, backed_team:teams!synced_users_backed_team_id_fkey(code, name, flag_emoji, logo_url)').not('backed_team_id', 'is', null)
+          if (from) q = q.gte('created_at', from)
+          if (to) q = q.lte('created_at', to)
+          const { data: page } = await q.order('id', { ascending: true }).range(start, start + PAGE - 1)
+          if (!page || page.length === 0) break
+          teamData.push(...page)
+          if (page.length < PAGE) break
+          start += PAGE
+        }
+      }
+    }
 
     let predsQuery = supabase.from('predictions').select('*', { count: 'exact', head: true })
+    if (cid) predsQuery = predsQuery.eq('campaign_id', cid)
     if (from) predsQuery = predsQuery.gte('created_at', from)
     if (to) predsQuery = predsQuery.lte('created_at', to)
     const { count: totalPredictions } = await predsQuery
 
-    const { count: matchesCompleted } = await supabase
-      .from('matches')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'completed')
+    let matchesCompletedQuery = supabase.from('matches').select('*', { count: 'exact', head: true }).eq('status', 'completed')
+    if (cid) matchesCompletedQuery = matchesCompletedQuery.eq('campaign_id', cid)
+    const { count: matchesCompleted } = await matchesCompletedQuery
 
-    const { count: matchesScheduled } = await supabase
-      .from('matches')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'scheduled')
+    let matchesScheduledQuery = supabase.from('matches').select('*', { count: 'exact', head: true }).eq('status', 'scheduled')
+    if (cid) matchesScheduledQuery = matchesScheduledQuery.eq('campaign_id', cid)
+    const { count: matchesScheduled } = await matchesScheduledQuery
 
     let correctQuery = supabase.from('predictions').select('*', { count: 'exact', head: true }).eq('scored', true).gt('points_awarded', 0)
+    if (cid) correctQuery = correctQuery.eq('campaign_id', cid)
     if (from) correctQuery = correctQuery.gte('created_at', from)
     if (to) correctQuery = correctQuery.lte('created_at', to)
     const { count: correctPredictions } = await correctQuery
 
     let incorrectQuery = supabase.from('predictions').select('*', { count: 'exact', head: true }).eq('scored', true).eq('points_awarded', 0)
+    if (cid) incorrectQuery = incorrectQuery.eq('campaign_id', cid)
     if (from) incorrectQuery = incorrectQuery.gte('created_at', from)
     if (to) incorrectQuery = incorrectQuery.lte('created_at', to)
     const { count: incorrectPredictions } = await incorrectQuery
 
-    let exactQuery = supabase.from('predictions').select('*', { count: 'exact', head: true }).eq('scored', true).gte('points_awarded', 15)
-    if (from) exactQuery = exactQuery.gte('created_at', from)
-    if (to) exactQuery = exactQuery.lte('created_at', to)
-    const { count: exactScorelines } = await exactQuery
-
-    let teamDataQuery = supabase.from('synced_users').select('backed_team_id, backed_team:teams!synced_users_backed_team_id_fkey(code, name, flag_emoji)').not('backed_team_id', 'is', null)
-    if (from) teamDataQuery = teamDataQuery.gte('created_at', from)
-    if (to) teamDataQuery = teamDataQuery.lte('created_at', to)
-    const { data: teamData } = await teamDataQuery
+    const exactRes = await call('reports/exact-scorelines', {
+      admin_email: admin.value!.email,
+      campaign_id: cid,
+      from,
+      to,
+    })
+    const exactScorelines = Number(exactRes.count) || 0
 
     const teamCounts: Record<string, { code: string; name: string; flag_emoji: string; count: number }> = {}
     for (const row of teamData || []) {
@@ -786,21 +1567,75 @@ const loadReports = async () => {
       if (!t) continue
       const key = row.backed_team_id
       if (!teamCounts[key]) {
-        teamCounts[key] = { code: t.code, name: t.name, flag_emoji: t.flag_emoji || '', count: 0 }
+        teamCounts[key] = { code: t.code, name: t.name, flag_emoji: t.flag_emoji || '', logo_url: t.logo_url || '', count: 0 }
       }
       teamCounts[key].count++
     }
     const teamDistribution = Object.values(teamCounts).sort((a, b) => b.count - a.count)
 
-    const { data: signupRows } = await supabase.rpc('get_daily_signups')
-    let dailySignups = (signupRows || []).map((r: any) => ({ date: r.date, count: Number(r.count) }))
+    const signupRes = await call('reports/daily-signups', { admin_email: admin.value!.email })
+    let dailySignups = (signupRes.rows || []).map((r: any) => ({ date: r.date, count: Number(r.count) }))
     if (from) dailySignups = dailySignups.filter((d) => d.date >= from)
     if (to) dailySignups = dailySignups.filter((d) => d.date <= (reportDateTo.value || '9999-12-31'))
 
-    const { data: predRows } = await supabase.rpc('get_daily_predictions')
-    let dailyPredictions = (predRows || []).map((r: any) => ({ date: r.date, count: Number(r.count) }))
+    const predRes = await call('reports/daily-predictions', { admin_email: admin.value!.email })
+    let dailyPredictions = (predRes.rows || []).map((r: any) => ({ date: r.date, count: Number(r.count) }))
     if (from) dailyPredictions = dailyPredictions.filter((d) => d.date >= from)
     if (to) dailyPredictions = dailyPredictions.filter((d) => d.date <= (reportDateTo.value || '9999-12-31'))
+
+    // --- Feature engagement metrics ---
+    const withRange = (q: any, col = 'created_at') => {
+      if (from) q = q.gte(col, from)
+      if (to) q = q.lte(col, to)
+      return q
+    }
+    const withCampaign = (q: any) => (cid ? q.eq('campaign_id', cid) : q)
+
+    // Side quests
+    const { count: questsTotal } = await withCampaign(supabase.from('side_quests').select('*', { count: 'exact', head: true }))
+    const { count: questsResolved } = await withCampaign(supabase.from('side_quests').select('*', { count: 'exact', head: true }).eq('status', 'resolved'))
+    const { count: questEntriesTotal } = await withRange(withCampaign(supabase.from('side_quest_entries').select('*', { count: 'exact', head: true })))
+    const { count: questEntriesCorrect } = await withRange(withCampaign(supabase.from('side_quest_entries').select('*', { count: 'exact', head: true }).eq('is_correct', true)))
+
+    // Head-to-head
+    const { count: h2hOptInsTotal } = await withRange(withCampaign(supabase.from('h2h_optins').select('*', { count: 'exact', head: true })))
+    const { count: h2hPairingsTotal } = await withCampaign(supabase.from('h2h_pairings').select('*', { count: 'exact', head: true }))
+    const { count: h2hCompleted } = await withCampaign(supabase.from('h2h_pairings').select('*', { count: 'exact', head: true }).eq('status', 'completed'))
+    const { count: h2hPlayers } = await withCampaign(supabase.from('h2h_standings').select('*', { count: 'exact', head: true }))
+
+    // Chips
+    const chipTypes = ['double_down', 'triple_captain', 'first_blood', 'streak_shield', 'last_stand', 'perfect_week']
+    const chipTypeLabels: Record<string, string> = {
+      double_down: 'Double Down', triple_captain: 'Triple Captain', first_blood: 'First Blood',
+      streak_shield: 'Streak Shield', last_stand: 'Last Stand', perfect_week: 'Perfect Week',
+    }
+    const chipsByType: Array<{ type: string; count: number }> = []
+    let chipsTotal = 0
+    for (const ct of chipTypes) {
+      const { count } = await withRange(withCampaign(supabase.from('chip_activations').select('*', { count: 'exact', head: true }).eq('chip_type', ct)), 'activated_at')
+      const c = count || 0
+      chipsTotal += c
+      chipsByType.push({ type: chipTypeLabels[ct] || ct, count: c })
+    }
+    chipsByType.sort((a, b) => b.count - a.count)
+
+    // Streaks
+    const { count: streakUsers } = await withCampaign(supabase.from('user_streaks').select('*', { count: 'exact', head: true }))
+    const { data: topCurrent } = await withCampaign(supabase.from('user_streaks').select('current_streak').order('current_streak', { ascending: false }).limit(1)).maybeSingle()
+    const { data: topEver } = await withCampaign(supabase.from('user_streaks').select('longest_streak').order('longest_streak', { ascending: false }).limit(1)).maybeSingle()
+
+    // Groups
+    const { count: groupsTotal } = await withCampaign(supabase.from('groups').select('*', { count: 'exact', head: true }))
+    const { data: groupIdRows } = await withCampaign(supabase.from('groups').select('id'))
+    const groupIds = (groupIdRows || []).map((g: any) => g.id)
+    let groupMembersTotal = 0
+    if (groupIds.length) {
+      const { count } = await supabase.from('group_members').select('*', { count: 'exact', head: true }).in('group_id', groupIds)
+      groupMembersTotal = count || 0
+    }
+
+    // Players roster
+    const { count: playersRoster } = await withCampaign(supabase.from('players').select('*', { count: 'exact', head: true }))
 
     reportData.value = {
       totalUsers: totalUsers || 0,
@@ -808,8 +1643,13 @@ const loadReports = async () => {
       guestUsers: guestUsers || 0,
       activeCustomers: activeCustomers || 0,
       usersWithTeam: usersWithTeam || 0,
+      campaignUsers,
+      campaignWithAccount,
+      campaignGuests,
+      campaignActive,
       savingsEnabled: savingsEnabled || 0,
       totalSavingsAmount,
+      isTournament: isTournamentCampaign,
       totalPredictions: totalPredictions || 0,
       matchesCompleted: matchesCompleted || 0,
       matchesScheduled: matchesScheduled || 0,
@@ -819,6 +1659,22 @@ const loadReports = async () => {
       teamDistribution,
       dailySignups,
       dailyPredictions,
+      questsTotal: questsTotal || 0,
+      questsResolved: questsResolved || 0,
+      questEntriesTotal: questEntriesTotal || 0,
+      questEntriesCorrect: questEntriesCorrect || 0,
+      h2hOptInsTotal: h2hOptInsTotal || 0,
+      h2hPairingsTotal: h2hPairingsTotal || 0,
+      h2hCompleted: h2hCompleted || 0,
+      h2hPlayers: h2hPlayers || 0,
+      chipsTotal,
+      chipsByType,
+      streakUsers: streakUsers || 0,
+      longestCurrentStreak: (topCurrent as any)?.current_streak || 0,
+      longestEverStreak: (topEver as any)?.longest_streak || 0,
+      groupsTotal: groupsTotal || 0,
+      groupMembersTotal,
+      playersRoster: playersRoster || 0,
     }
   } catch (e) {
     error.value = (e as Error).message
@@ -841,13 +1697,21 @@ const loadGuestList = async () => {
     let predCounts: Record<string, number> = {}
 
     if (guestIds.length) {
-      const { data: preds } = await supabase
-        .from('predictions')
-        .select('user_id')
-        .in('user_id', guestIds)
-
-      for (const p of preds || []) {
-        predCounts[p.user_id] = (predCounts[p.user_id] || 0) + 1
+      const PAGE = 1000
+      let start = 0
+      while (true) {
+        const { data: preds } = await supabase
+          .from('predictions')
+          .select('user_id')
+          .in('user_id', guestIds)
+          .order('user_id', { ascending: true })
+          .range(start, start + PAGE - 1)
+        if (!preds || preds.length === 0) break
+        for (const p of preds) {
+          predCounts[p.user_id] = (predCounts[p.user_id] || 0) + 1
+        }
+        if (preds.length < PAGE) break
+        start += PAGE
       }
     }
 
@@ -894,12 +1758,21 @@ const exportGuestCsv = async () => {
 
     for (let i = 0; i < guestIds.length; i += 500) {
       const batch = guestIds.slice(i, i + 500)
-      const { data: preds } = await supabase
-        .from('predictions')
-        .select('user_id')
-        .in('user_id', batch)
-      for (const p of preds || []) {
-        predCounts[p.user_id] = (predCounts[p.user_id] || 0) + 1
+      const PAGE = 1000
+      let start = 0
+      while (true) {
+        const { data: preds } = await supabase
+          .from('predictions')
+          .select('user_id')
+          .in('user_id', batch)
+          .order('user_id', { ascending: true })
+          .range(start, start + PAGE - 1)
+        if (!preds || preds.length === 0) break
+        for (const p of preds) {
+          predCounts[p.user_id] = (predCounts[p.user_id] || 0) + 1
+        }
+        if (preds.length < PAGE) break
+        start += PAGE
       }
     }
 
@@ -1061,6 +1934,12 @@ const acquisitionData = ref<{
 const acquisitionLoading = ref(false)
 const acquisitionExporting = ref(false)
 
+// Users who joined after the current campaign launched (derived from campaign config, not hardcoded)
+const acquisitionCutoff = computed(() => {
+  const d = campaignConfig.value?.week_start_date
+  return d ? `${d}T00:00:00+00:00` : '2026-06-08T23:59:59+00:00'
+})
+
 const loadAcquisition = async () => {
   acquisitionLoading.value = true
   try {
@@ -1068,13 +1947,13 @@ const loadAcquisition = async () => {
       .from('synced_users')
       .select('*', { count: 'exact', head: true })
       .eq('is_staff', false)
-      .gt('created_at', '2026-06-08T23:59:59+00:00')
+      .gt('created_at', acquisitionCutoff.value)
 
     const { count: neverTransacted } = await supabase
       .from('synced_users')
       .select('*', { count: 'exact', head: true })
       .eq('is_staff', false)
-      .gt('created_at', '2026-06-08T23:59:59+00:00')
+      .gt('created_at', acquisitionCutoff.value)
       .eq('qualifying_transactions_count', 0)
       .eq('active_customer_flag', false)
 
@@ -1108,7 +1987,7 @@ const exportAcquisitionCsv = async () => {
         .from('synced_users')
         .select('id, email, name, username, phone_number, social_handles, created_at, total_points, backed_team_id')
         .eq('is_staff', false)
-        .gt('created_at', '2026-06-08T23:59:59+00:00')
+        .gt('created_at', acquisitionCutoff.value)
         .eq('qualifying_transactions_count', 0)
         .eq('active_customer_flag', false)
         .order('created_at', { ascending: false })
@@ -1213,6 +2092,33 @@ watch(activeTab, (tab) => {
             </div>
 
             <div class="space-y-4">
+              <div class="flex items-center justify-between p-4 rounded-xl border-2 transition"
+                :class="campaignConfig.public_access_enabled ? 'border-mint-200 bg-mint-50/50' : 'border-sun-200 bg-sun-50/50'">
+                <div>
+                  <div class="font-semibold text-ink-900 text-sm">Public access</div>
+                  <div class="text-xs text-ink-500 mt-0.5">
+                    {{ campaignConfig.public_access_enabled
+                      ? 'Players can sign in and use the dashboard.'
+                      : 'Site is in “coming soon” mode — sign-in and dashboard are closed to players.' }}
+                  </div>
+                </div>
+                <button
+                  @click="toggleCampaignField('public_access_enabled')"
+                  :disabled="campaignLoading"
+                  :class="[
+                    'relative w-12 h-7 rounded-full transition-colors duration-200 flex-shrink-0',
+                    campaignConfig.public_access_enabled ? 'bg-mint-500' : 'bg-ink-200',
+                  ]"
+                >
+                  <span
+                    :class="[
+                      'absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-transform duration-200',
+                      campaignConfig.public_access_enabled ? 'translate-x-5' : 'translate-x-0',
+                    ]"
+                  ></span>
+                </button>
+              </div>
+
               <div class="flex items-center justify-between p-4 rounded-xl border border-ink-100 hover:border-ink-200 transition">
                 <div>
                   <div class="font-semibold text-ink-900 text-sm">Predictions</div>
@@ -1278,6 +2184,62 @@ watch(activeTab, (tab) => {
                   ></span>
                 </button>
               </div>
+
+              <div class="pt-2 mt-2 border-t border-ink-100">
+                <div class="text-xs font-semibold uppercase tracking-wide text-ink-400 mb-3">Active customer eligibility</div>
+
+                <div class="flex items-center justify-between p-4 rounded-xl border border-ink-100 hover:border-ink-200 transition mb-4">
+                  <div class="pr-3">
+                    <div class="font-semibold text-ink-900 text-sm">Leaderboard requires active customer</div>
+                    <div class="text-xs text-ink-500 mt-0.5">
+                      {{ campaignConfig.require_eligibility_leaderboard
+                        ? 'Only active Sycamore customers appear on the general leaderboard.'
+                        : 'Everyone appears on the general leaderboard, active or not.' }}
+                    </div>
+                  </div>
+                  <button
+                    @click="toggleCampaignField('require_eligibility_leaderboard')"
+                    :disabled="campaignLoading"
+                    :class="[
+                      'relative w-12 h-7 rounded-full transition-colors duration-200 flex-shrink-0',
+                      campaignConfig.require_eligibility_leaderboard ? 'bg-mint-500' : 'bg-ink-200',
+                    ]"
+                  >
+                    <span
+                      :class="[
+                        'absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-transform duration-200',
+                        campaignConfig.require_eligibility_leaderboard ? 'translate-x-5' : 'translate-x-0',
+                      ]"
+                    ></span>
+                  </button>
+                </div>
+
+                <div class="flex items-center justify-between p-4 rounded-xl border border-ink-100 hover:border-ink-200 transition">
+                  <div class="pr-3">
+                    <div class="font-semibold text-ink-900 text-sm">Chips require active customer</div>
+                    <div class="text-xs text-ink-500 mt-0.5">
+                      {{ campaignConfig.require_eligibility_chips
+                        ? 'Only active Sycamore customers can use power-up chips.'
+                        : 'Everyone can use power-up chips, active or not.' }}
+                    </div>
+                  </div>
+                  <button
+                    @click="toggleCampaignField('require_eligibility_chips')"
+                    :disabled="campaignLoading"
+                    :class="[
+                      'relative w-12 h-7 rounded-full transition-colors duration-200 flex-shrink-0',
+                      campaignConfig.require_eligibility_chips ? 'bg-mint-500' : 'bg-ink-200',
+                    ]"
+                  >
+                    <span
+                      :class="[
+                        'absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-transform duration-200',
+                        campaignConfig.require_eligibility_chips ? 'translate-x-5' : 'translate-x-0',
+                      ]"
+                    ></span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1288,10 +2250,10 @@ watch(activeTab, (tab) => {
             </div>
             <div class="flex gap-3">
               <input
-                v-model="campaignConfig.campaign_name"
+                v-model="campaignConfig.name"
                 type="text"
                 class="input !py-2 flex-1"
-                placeholder="e.g. World Cup 2026 Predictor League"
+                placeholder="e.g. Premier League 2025/26 Predictor"
               />
               <button
                 @click="updateCampaignName"
@@ -1350,7 +2312,427 @@ watch(activeTab, (tab) => {
             </div>
             <p class="text-xs text-ink-400">Currently set to {{ campaignConfig.prediction_lock_minutes }} min ({{ (campaignConfig.prediction_lock_minutes / 60).toFixed(1) }}h) before kickoff.</p>
           </div>
+
+          <div class="card p-5 space-y-4">
+            <div>
+              <h3 class="font-bold text-ink-900">Chips configuration</h3>
+              <p class="text-sm text-ink-500">Set how many times each chip can be used per campaign. Only 1 chip (of any type) is allowed per matchweek.</p>
+            </div>
+            <div class="grid grid-cols-2 lg:grid-cols-3 gap-4">
+              <div>
+                <label class="text-xs font-semibold text-ink-500 uppercase">Double Down uses</label>
+                <input v-model.number="campaignConfig.max_double_down_uses" type="number" min="0" max="38" class="input !py-2 mt-1 w-full" />
+                <p class="text-xs text-ink-400 mt-1">2x points for all matches in 1 week</p>
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-ink-500 uppercase">Triple Captain uses</label>
+                <input v-model.number="campaignConfig.max_triple_captain_uses" type="number" min="0" max="38" class="input !py-2 mt-1 w-full" />
+                <p class="text-xs text-ink-400 mt-1">3x points for 1 specific match</p>
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-ink-500 uppercase">First Blood uses</label>
+                <input v-model.number="campaignConfig.max_first_blood_uses" type="number" min="0" max="38" class="input !py-2 mt-1 w-full" />
+                <p class="text-xs text-ink-400 mt-1">1.5x week bonus if your first pick lands</p>
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-ink-500 uppercase">Streak Shield uses</label>
+                <input v-model.number="campaignConfig.max_streak_shield_uses" type="number" min="0" max="38" class="input !py-2 mt-1 w-full" />
+                <p class="text-xs text-ink-400 mt-1">Protects your streak for one week</p>
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-ink-500 uppercase">Last Stand uses</label>
+                <input v-model.number="campaignConfig.max_last_stand_uses" type="number" min="0" max="38" class="input !py-2 mt-1 w-full" />
+                <p class="text-xs text-ink-400 mt-1">4x points, final 5 matchweeks only</p>
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-ink-500 uppercase">Perfect Week uses</label>
+                <input v-model.number="campaignConfig.max_perfect_week_uses" type="number" min="0" max="38" class="input !py-2 mt-1 w-full" />
+                <p class="text-xs text-ink-400 mt-1">+50 points for a flawless matchweek</p>
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-ink-500 uppercase">Total matchweeks</label>
+                <input v-model.number="campaignConfig.total_matchweeks" type="number" min="1" max="60" class="input !py-2 mt-1 w-full" />
+                <p class="text-xs text-ink-400 mt-1">Used to unlock Last Stand near the end</p>
+              </div>
+            </div>
+            <button @click="updateChipConfig" :disabled="campaignLoading" class="btn-primary !py-2 !px-4 text-sm">
+              {{ campaignLoading ? 'Saving...' : 'Save chips config' }}
+            </button>
+          </div>
+
+          <div class="card p-5 space-y-4">
+            <div>
+              <h3 class="font-bold text-ink-900">Scoring points</h3>
+              <p class="text-sm text-ink-500">Configure how many points are awarded per correct prediction type.</p>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              <div>
+                <label class="text-xs font-semibold text-ink-500 uppercase">Winner correct</label>
+                <input v-model.number="campaignConfig.scoring_result" type="number" min="0" class="input !py-2 mt-1 w-full" />
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-ink-500 uppercase">First to score</label>
+                <input v-model.number="campaignConfig.scoring_first_to_score" type="number" min="0" class="input !py-2 mt-1 w-full" />
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-ink-500 uppercase">Exact score (FT)</label>
+                <input v-model.number="campaignConfig.scoring_exact_ft" type="number" min="0" class="input !py-2 mt-1 w-full" />
+              </div>
+              <div v-if="campaignConfig.has_knockout_stages">
+                <label class="text-xs font-semibold text-ink-500 uppercase">Exact score (AET)</label>
+                <input v-model.number="campaignConfig.scoring_exact_aet" type="number" min="0" class="input !py-2 mt-1 w-full" />
+              </div>
+              <div v-if="campaignConfig.has_knockout_stages">
+                <label class="text-xs font-semibold text-ink-500 uppercase">Exact score (PEN)</label>
+                <input v-model.number="campaignConfig.scoring_exact_pen" type="number" min="0" class="input !py-2 mt-1 w-full" />
+              </div>
+            </div>
+            <div class="pt-3 border-t border-ink-100 space-y-3">
+              <label class="flex items-center gap-2">
+                <input v-model="campaignConfig.upset_multiplier_enabled" type="checkbox" class="w-4 h-4 rounded accent-amber-500" />
+                <span class="text-sm font-semibold text-ink-700">Enable upset multiplier</span>
+              </label>
+              <div v-if="campaignConfig.upset_multiplier_enabled" class="grid grid-cols-3 gap-4">
+                <div>
+                  <label class="text-xs font-semibold text-ink-500 uppercase">Favourite mult.</label>
+                  <input v-model.number="campaignConfig.upset_multiplier_favourite" type="number" step="0.1" min="0" class="input !py-2 mt-1 w-full" />
+                </div>
+                <div>
+                  <label class="text-xs font-semibold text-ink-500 uppercase">Draw mult.</label>
+                  <input v-model.number="campaignConfig.upset_multiplier_draw" type="number" step="0.1" min="0" class="input !py-2 mt-1 w-full" />
+                </div>
+                <div>
+                  <label class="text-xs font-semibold text-ink-500 uppercase">Underdog mult.</label>
+                  <input v-model.number="campaignConfig.upset_multiplier_underdog" type="number" step="0.1" min="0" class="input !py-2 mt-1 w-full" />
+                </div>
+              </div>
+            </div>
+            <button @click="updateScoringConfig" :disabled="campaignLoading" class="btn-primary !py-2 !px-4 text-sm">
+              {{ campaignLoading ? 'Saving...' : 'Save scoring config' }}
+            </button>
+          </div>
+
+          <!-- Streak Milestones -->
+          <div class="card p-5 space-y-4">
+            <div>
+              <h3 class="font-bold text-ink-900">Streak Milestones</h3>
+              <p class="text-sm text-ink-500">Configure bonus points awarded when users reach streak thresholds. Points go directly to the leaderboard.</p>
+            </div>
+            <div v-if="milestonesLoading && !milestones.length" class="h-20 animate-pulse bg-ink-100/40 rounded-xl"></div>
+            <div v-else class="space-y-2">
+              <div v-for="ms in milestones" :key="ms.id" class="flex items-center justify-between bg-ink-50 rounded-xl px-4 py-2.5">
+                <div class="flex items-center gap-3">
+                  <span class="text-lg">🔥</span>
+                  <span class="text-sm font-semibold text-ink-800">{{ ms.threshold }} streak</span>
+                  <span class="text-xs text-ink-500">→</span>
+                  <span class="text-sm font-bold text-emerald-600">+{{ ms.bonus_points }} pts</span>
+                </div>
+                <button @click="removeMilestone(ms.id)" class="text-xs text-red-500 hover:text-red-700 font-semibold">Remove</button>
+              </div>
+              <div v-if="!milestones.length" class="text-sm text-ink-400 italic py-2">No milestones configured yet.</div>
+            </div>
+            <div class="flex items-end gap-3 pt-2 border-t border-ink-100">
+              <div class="flex-1">
+                <label class="text-xs font-semibold text-ink-500 uppercase">Streak threshold</label>
+                <input v-model.number="newMilestoneThreshold" type="number" min="1" placeholder="e.g. 10" class="input !py-2 mt-1 w-full" />
+              </div>
+              <div class="flex-1">
+                <label class="text-xs font-semibold text-ink-500 uppercase">Bonus points</label>
+                <input v-model.number="newMilestonePoints" type="number" min="1" placeholder="e.g. 15" class="input !py-2 mt-1 w-full" />
+              </div>
+              <button @click="addMilestone" :disabled="!newMilestoneThreshold || !newMilestonePoints || milestonesLoading" class="btn-primary !py-2 !px-4 text-sm whitespace-nowrap">
+                Add
+              </button>
+            </div>
+          </div>
         </template>
+      </div>
+
+      <!-- SIDE QUESTS TAB -->
+      <div v-if="activeTab === 'quests'" class="space-y-6">
+        <!-- Sub-navigation -->
+        <div class="flex flex-wrap gap-1.5 p-1 bg-ink-100 rounded-xl w-fit">
+          <button v-for="p in [
+            { key: 'suggest', label: 'Suggest' },
+            { key: 'custom', label: 'Create' },
+            { key: 'library', label: 'Library' },
+            { key: 'manage', label: 'Manage' },
+            { key: 'tools', label: 'Tools' },
+          ]" :key="p.key"
+            @click="questPanel = p.key as any; p.key === 'library' && (loadTemplates(), loadQuestTeams())"
+            :class="['px-4 py-1.5 rounded-lg text-xs font-semibold transition', questPanel === p.key ? 'bg-white shadow-sm text-ink-900' : 'text-ink-600 hover:text-ink-900']"
+          >{{ p.label }}</button>
+        </div>
+
+        <!-- SUGGEST PANEL -->
+        <div v-show="questPanel === 'suggest'" class="card p-5 space-y-4">
+          <div>
+            <h3 class="font-bold text-ink-900">Suggest Quests</h3>
+            <p class="text-sm text-ink-500">Build the standard set for a matchweek (over/under, clean sheets, both teams to score, highest-scoring match, and player-to-score picks), review them, then publish the ones you want. Already-published types are skipped automatically.</p>
+          </div>
+          <div class="flex items-end gap-3">
+            <div>
+              <label class="text-xs font-semibold text-ink-500 uppercase">Matchweek</label>
+              <input v-model.number="suggestWeek" type="number" min="1" placeholder="e.g. 2" class="input !py-2 mt-1 w-24" />
+            </div>
+            <button @click="suggestQuests" :disabled="!suggestWeek || suggesting" class="btn-primary !py-2 !px-4 text-sm">{{ suggesting ? 'Building...' : 'Suggest quests' }}</button>
+            <button @click="generateWeek = suggestWeek; generateQuests()" :disabled="!suggestWeek || sideQuestsLoading" class="pill bg-ink-100 text-ink-700 hover:bg-ink-200 text-xs">Publish all instantly</button>
+          </div>
+          <p v-if="suggestNote" class="text-xs text-ink-600 bg-ink-50 rounded-xl px-3 py-2">{{ suggestNote }}</p>
+          <p v-if="generateResult" class="text-xs text-ink-600 bg-ink-50 rounded-xl px-3 py-2">{{ generateResult }}</p>
+
+          <!-- Review candidates -->
+          <div v-if="suggestedQuests.length" class="space-y-2 pt-2 border-t border-ink-100">
+            <div class="flex items-center justify-between">
+              <p class="text-xs font-semibold text-ink-500 uppercase">Review ({{ suggestedQuests.filter((q) => q.include).length }} selected)</p>
+              <button @click="publishSuggested" :disabled="publishing || !suggestedQuests.some((q) => q.include)" class="btn-primary !py-1.5 !px-3 text-xs">{{ publishing ? 'Publishing...' : 'Publish selected' }}</button>
+            </div>
+            <div v-for="(q, i) in suggestedQuests" :key="i"
+              :class="['rounded-xl border px-4 py-3 transition', q.include ? 'bg-white border-sky-200' : 'bg-ink-50 border-ink-100 opacity-60']">
+              <div class="flex items-start gap-3">
+                <input type="checkbox" v-model="q.include" class="mt-1 w-4 h-4 accent-sky-600" />
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2">
+                    <img v-if="q.options_meta?.player?.photo_url" :src="q.options_meta.player.photo_url" :alt="q.title" class="w-7 h-7 rounded-full object-cover ring-1 ring-emerald-200 flex-shrink-0" />
+                    <p class="text-sm font-semibold text-ink-800 truncate">{{ q.title }}</p>
+                  </div>
+                  <p class="text-xs text-ink-500 mt-0.5">{{ q.description }}</p>
+                  <div class="flex flex-wrap gap-1 mt-1.5">
+                    <span v-for="opt in q.options" :key="opt" class="text-[10px] font-semibold text-ink-500 bg-ink-100 rounded px-1.5 py-0.5">{{ q.options_meta?.labels?.[opt] || opt }}</span>
+                  </div>
+                </div>
+                <div class="flex-shrink-0 text-right">
+                  <label class="text-[10px] font-semibold text-ink-400 uppercase block">Points</label>
+                  <input v-model.number="q.point_value" type="number" min="1" class="input !py-1 !px-2 mt-0.5 w-16 text-sm text-right" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Head-to-head pairings -->
+        <div v-show="questPanel === 'tools'" class="card p-5 space-y-4">
+          <div>
+            <h3 class="font-bold text-ink-900">Head-to-Head Matchups</h3>
+            <p class="text-sm text-ink-500">Randomly pair up the players who opted into a given week. Each player faces one opponent; the one with more prediction points that week wins. Run this once per week after opt-in closes and before matches lock.</p>
+          </div>
+          <div class="flex items-end gap-3">
+            <div>
+              <label class="text-xs font-semibold text-ink-500 uppercase">Week</label>
+              <input v-model.number="h2hWeek" type="number" min="1" placeholder="e.g. 2" class="input !py-2 mt-1 w-24" />
+            </div>
+            <button @click="generateH2HPairings" :disabled="!h2hWeek || h2hLoading" class="btn-primary !py-2 !px-4 text-sm">{{ h2hLoading ? 'Generating...' : 'Generate matchups' }}</button>
+          </div>
+          <p v-if="h2hWeek && h2hOptInCount !== null" class="text-xs text-ink-600">{{ h2hOptInCount }} player{{ h2hOptInCount === 1 ? '' : 's' }} opted into week {{ h2hWeek }}.</p>
+          <p v-if="h2hResult" class="text-xs text-ink-600 bg-ink-50 rounded-xl px-3 py-2">{{ h2hResult }}</p>
+
+          <div v-if="campaignConfig" class="pt-4 border-t border-ink-100">
+            <label class="text-xs font-semibold text-ink-500 uppercase">Weekly opt-in limit</label>
+            <div class="flex items-end gap-3 mt-1">
+              <input v-model.number="campaignConfig.h2h_weekly_limit" type="number" min="0" class="input !py-2 w-28" />
+              <button @click="updateH2HConfig" :disabled="campaignLoading" class="btn-primary !py-2 !px-4 text-sm">{{ campaignLoading ? 'Saving...' : 'Save limit' }}</button>
+            </div>
+            <p class="text-xs text-ink-400 mt-1">Maximum players allowed to opt into each week. Set to 0 for no limit (the default). Once a week is full, players can no longer opt in.</p>
+            <p v-if="h2hConfigSaved" class="text-xs text-emerald-600 mt-1">Weekly limit saved.</p>
+          </div>
+        </div>
+
+        <!-- Player roster sync -->
+        <div v-show="questPanel === 'tools'" class="card p-5 space-y-3">
+          <div>
+            <h3 class="font-bold text-ink-900">Player Roster</h3>
+            <p class="text-sm text-ink-500">Pull each club's squad so player-pick quests offer a fixed list. New clubs are added automatically; use “Refresh all” to update existing squads.</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <button @click="syncPlayers(false)" :disabled="syncPlayersLoading" class="btn-primary !py-2 !px-4 text-sm">{{ syncPlayersLoading ? 'Syncing...' : 'Sync players' }}</button>
+            <button @click="syncPlayers(true)" :disabled="syncPlayersLoading" class="pill bg-ink-100 text-ink-700 hover:bg-ink-200 text-xs">Refresh all</button>
+          </div>
+          <p v-if="syncPlayersResult" class="text-xs text-ink-600 bg-ink-50 rounded-xl px-3 py-2">{{ syncPlayersResult }}</p>
+        </div>
+
+        <!-- Create custom quest -->
+        <div v-show="questPanel === 'custom'" class="card p-5 space-y-4">
+          <div>
+            <h3 class="font-bold text-ink-900">Create Custom Quest</h3>
+            <p class="text-sm text-ink-500">Manually create a side quest. Use player picks for “who will score” style quests so answers stay consistent.</p>
+          </div>
+
+          <!-- Answer type toggle -->
+          <div class="flex gap-2 p-1 bg-ink-100 rounded-xl w-fit">
+            <button
+              @click="questMode = 'text'"
+              :class="['px-4 py-1.5 rounded-lg text-xs font-semibold transition', questMode === 'text' ? 'bg-white shadow-sm text-ink-900' : 'text-ink-600']"
+            >Custom options</button>
+            <button
+              @click="questMode = 'players'; loadQuestTeams()"
+              :class="['px-4 py-1.5 rounded-lg text-xs font-semibold transition', questMode === 'players' ? 'bg-white shadow-sm text-ink-900' : 'text-ink-600']"
+            >Player picks</button>
+            <button
+              @click="questMode = 'player_score'; loadQuestTeams()"
+              :class="['px-4 py-1.5 rounded-lg text-xs font-semibold transition', questMode === 'player_score' ? 'bg-white shadow-sm text-ink-900' : 'text-ink-600']"
+            >Will they score?</button>
+          </div>
+
+          <p v-if="questMode === 'player_score'" class="text-xs text-ink-500 bg-sky-50 border border-sky-100 rounded-xl px-3 py-2">
+            Pick one player. Players answer Yes / No, and it settles itself from the recorded goalscorers. Leave the title blank to auto-name it, or use <span class="font-mono font-semibold">{MW}</span> for the matchweek number.
+          </p>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div class="col-span-2">
+              <label class="text-xs font-semibold text-ink-500 uppercase">Title</label>
+              <input v-model="newQuestTitle" type="text" placeholder="e.g. Player to score a brace" class="input !py-2 mt-1 w-full" />
+            </div>
+            <div>
+              <label class="text-xs font-semibold text-ink-500 uppercase">Matchweek</label>
+              <input v-model.number="newQuestMatchweek" type="number" min="1" placeholder="Leave blank for season-long" class="input !py-2 mt-1 w-full" />
+            </div>
+            <div>
+              <label class="text-xs font-semibold text-ink-500 uppercase">Points</label>
+              <input v-model.number="newQuestPoints" type="number" min="1" class="input !py-2 mt-1 w-full" />
+            </div>
+            <div v-if="questMode === 'text'" class="col-span-2">
+              <label class="text-xs font-semibold text-ink-500 uppercase">Options (comma-separated)</label>
+              <input v-model="newQuestOptions" type="text" placeholder="e.g. Over, Under, Exactly" class="input !py-2 mt-1 w-full" />
+              <div class="flex flex-wrap gap-1.5 mt-2">
+                <button
+                  v-for="preset in optionPresets"
+                  :key="preset.label"
+                  type="button"
+                  @click="newQuestOptions = preset.value"
+                  class="pill bg-ink-100 text-ink-600 hover:bg-ink-200 text-[11px]"
+                >{{ preset.label }}</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Locking -->
+          <div class="rounded-xl border border-ink-100 bg-ink-50/60 p-3 space-y-2">
+            <div class="flex items-center justify-between">
+              <label class="text-xs font-semibold text-ink-500 uppercase">Locks at (entries close)</label>
+              <label class="flex items-center gap-1.5 text-xs text-ink-600">
+                <input type="checkbox" v-model="newQuestLineupLock" class="w-3.5 h-3.5 accent-sky-600" />
+                Lineup quest (lock ~75 min before kick-off)
+              </label>
+            </div>
+            <input v-model="newQuestLocksAt" type="datetime-local" class="input !py-2 w-full" />
+            <p class="text-xs text-ink-500">
+              Leave blank to lock automatically at the first kick-off of the chosen matchweek. Tick “Lineup quest” to lock earlier, before official team sheets are published. Season-long quests (no matchweek) only lock if you set a time here.
+            </p>
+          </div>
+
+          <!-- Player picker -->
+          <div v-if="questMode === 'players' || questMode === 'player_score'" class="space-y-3">
+            <div>
+              <label class="text-xs font-semibold text-ink-500 uppercase">Add players from a club</label>
+              <select v-model="questTeamId" class="input !py-2 mt-1 w-full">
+                <option value="">Select a club...</option>
+                <option v-for="t in questTeams" :key="t.id" :value="t.id">{{ t.name }}</option>
+              </select>
+            </div>
+
+            <div v-if="questPlayersLoading" class="h-16 animate-pulse bg-ink-100/40 rounded-xl"></div>
+            <div v-else-if="questTeamId && questTeamPlayers.length" class="max-h-56 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-1.5 pr-1">
+              <button
+                v-for="p in questTeamPlayers"
+                :key="p.id"
+                type="button"
+                @click="togglePlayerOption(p)"
+                :class="['flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition border', isPlayerSelected(p.id) ? 'bg-sky-50 border-sky-300' : 'bg-white border-ink-100 hover:bg-ink-50']"
+              >
+                <img v-if="p.photo_url" :src="p.photo_url" :alt="p.name" class="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                <span v-else class="w-7 h-7 rounded-full bg-ink-100 flex-shrink-0"></span>
+                <span class="flex-1 min-w-0">
+                  <span class="block text-sm font-semibold text-ink-800 truncate">{{ p.name }}</span>
+                  <span class="block text-[10px] text-ink-400">{{ p.position }}</span>
+                </span>
+                <span v-if="isPlayerSelected(p.id)" class="text-sky-600 text-xs font-bold flex-shrink-0">Added</span>
+              </button>
+            </div>
+            <p v-else-if="questTeamId" class="text-xs text-ink-400 italic">No players found for this club. Run “Sync players” in the tools panel.</p>
+
+            <!-- Selected chips -->
+            <div v-if="questSelectedPlayers.length" class="space-y-1.5">
+              <p class="text-xs font-semibold text-ink-500 uppercase">Selected options ({{ questSelectedPlayers.length }})</p>
+              <div class="flex flex-wrap gap-1.5">
+                <span
+                  v-for="p in questSelectedPlayers"
+                  :key="p.id"
+                  class="inline-flex items-center gap-1.5 bg-ink-100 rounded-full pl-2 pr-1 py-0.5 text-xs font-semibold text-ink-700"
+                >
+                  {{ p.name }}
+                  <button type="button" @click="togglePlayerOption(p)" class="w-4 h-4 rounded-full bg-ink-300 text-white grid place-items-center hover:bg-red-400">&times;</button>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-3 pt-1">
+            <button @click="createCustomQuest" :disabled="sideQuestsLoading" class="btn-primary !py-2 !px-4 text-sm">Create Quest</button>
+            <button @click="saveAsTemplate" :disabled="templatesLoading" class="pill bg-ink-100 text-ink-700 hover:bg-ink-200 text-xs">Save as reusable template</button>
+            <label class="flex items-center gap-1.5 text-xs text-ink-500">
+              <input type="checkbox" v-model="templateGlobal" class="w-3.5 h-3.5 accent-sky-600" />
+              Template applies to all campaigns
+            </label>
+          </div>
+          <p v-if="templateNote" class="text-xs text-ink-600 bg-ink-50 rounded-xl px-3 py-2">{{ templateNote }}</p>
+        </div>
+
+        <!-- TEMPLATE LIBRARY PANEL -->
+        <div v-show="questPanel === 'library'" class="card p-5 space-y-4">
+          <div>
+            <h3 class="font-bold text-ink-900">Quest Template Library</h3>
+            <p class="text-sm text-ink-500">A reusable pool of quests. Every active template is offered automatically when you build a matchweek's suggestions, so you don't rebuild the same quests each week. Use <span class="font-mono font-semibold">{MW}</span> in a title for the matchweek number. Build new templates from the <button class="underline font-semibold" @click="questPanel = 'custom'">Create</button> tab with “Save as reusable template”.</p>
+          </div>
+          <p v-if="templateNote" class="text-xs text-ink-600 bg-ink-50 rounded-xl px-3 py-2">{{ templateNote }}</p>
+          <div v-if="templatesLoading && !templates.length" class="h-20 animate-pulse bg-ink-100/40 rounded-xl"></div>
+          <p v-else-if="!templates.length" class="text-sm text-ink-400 italic">No templates yet. Create one and tick “Save as reusable template”.</p>
+          <div v-else class="space-y-2">
+            <div v-for="t in templates" :key="t.id"
+              :class="['rounded-xl border px-4 py-3 flex items-start gap-3', t.active ? 'bg-white border-ink-100' : 'bg-ink-50 border-ink-100 opacity-60']">
+              <img v-if="t.options_meta?.player?.photo_url" :src="t.options_meta.player.photo_url" :alt="t.title" class="w-8 h-8 rounded-full object-cover ring-1 ring-emerald-200 flex-shrink-0" />
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-semibold text-ink-800">{{ t.title }}</p>
+                <p class="text-xs text-ink-500">{{ t.point_value }} pts · {{ t.quest_type }}<span v-if="t.campaign_id === null"> · all campaigns</span></p>
+                <div class="flex flex-wrap gap-1 mt-1.5">
+                  <span v-for="opt in t.options" :key="opt" class="text-[10px] font-semibold text-ink-500 bg-ink-100 rounded px-1.5 py-0.5">{{ t.options_meta?.labels?.[opt] || opt }}</span>
+                </div>
+              </div>
+              <div class="flex flex-col items-end gap-1.5 flex-shrink-0">
+                <button @click="toggleTemplateActive(t)" :class="['pill text-[11px]', t.active ? 'bg-emerald-100 text-emerald-700' : 'bg-ink-200 text-ink-600']">{{ t.active ? 'Active' : 'Paused' }}</button>
+                <button @click="deleteTemplate(t.id)" class="text-xs text-red-500 hover:text-red-700 font-semibold">Delete</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Existing quests list -->
+        <div v-show="questPanel === 'manage'" class="card p-5 space-y-4">
+          <h3 class="font-bold text-ink-900">All Quests ({{ sideQuests.length }})</h3>
+          <div v-if="sideQuestsLoading && !sideQuests.length" class="h-24 animate-pulse bg-ink-100/40 rounded-xl"></div>
+          <div v-else class="space-y-2 max-h-96 overflow-y-auto">
+            <div v-for="sq in sideQuests" :key="sq.id" class="bg-ink-50 rounded-xl px-4 py-2.5">
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-semibold text-ink-800">{{ sq.title }}</p>
+                  <p class="text-xs text-ink-500">MW {{ sq.matchweek || 'Season' }} · {{ sq.point_value }} pts · {{ sq.status }} {{ sq.is_auto_generated ? '(auto)' : '' }}</p>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span v-if="sq.status === 'resolved'" class="text-xs text-emerald-600 font-semibold">{{ sq.correct_answer }}</span>
+                  <button v-if="sq.status === 'open'" @click="deleteQuest(sq.id)" class="text-xs text-red-500 hover:text-red-700 font-semibold">Delete</button>
+                </div>
+              </div>
+              <!-- Resolve controls for open/locked quests -->
+              <div v-if="sq.status === 'open' || sq.status === 'locked'" class="flex items-center gap-2 mt-2 pt-2 border-t border-ink-100">
+                <select v-model="resolveAnswer[sq.id]" class="input !py-1.5 text-xs flex-1">
+                  <option value="">Select correct answer...</option>
+                  <option v-for="opt in sq.options" :key="opt" :value="opt">{{ sq.options_meta?.labels?.[opt] || opt }}</option>
+                </select>
+                <button @click="resolveQuestManually(sq.id)" :disabled="!resolveAnswer[sq.id] || resolvingQuest === sq.id" class="text-xs font-bold text-emerald-600 hover:text-emerald-700 disabled:opacity-50">Resolve</button>
+              </div>
+            </div>
+            <div v-if="!sideQuests.length" class="text-sm text-ink-400 italic py-2">No quests yet. Generate or create one above.</div>
+          </div>
+        </div>
       </div>
 
       <!-- FIXTURES TAB -->
@@ -1365,7 +2747,7 @@ watch(activeTab, (tab) => {
               v-model="searchQuery"
               type="text"
               class="input !py-2 flex-1 min-w-[200px]"
-              placeholder="e.g. World Cup, Premier League"
+              placeholder="e.g. Premier League, Champions League"
               @keydown.enter="searchCompetitions"
             />
             <button
@@ -1410,7 +2792,7 @@ watch(activeTab, (tab) => {
               <input v-model.number="seasonYear" type="number" class="input !py-2 w-28" />
             </div>
             <p class="text-xs text-ink-500 max-w-sm">
-              Defaults to FIFA World Cup 2026 (league 1, season 2026).
+              {{ campaignConfig ? `Using ${campaignConfig.name} (league ${campaignConfig.api_football_league_id}, season ${campaignConfig.api_football_season}).` : 'Defaults to league 1, season 2026.' }}
             </p>
           </div>
 
@@ -1430,11 +2812,11 @@ watch(activeTab, (tab) => {
             <span v-if="syncResult.skipped.length" class="block text-ink-500 mt-1">Skipped: {{ syncResult.skipped.join(', ') }}</span>
           </div>
 
-          <!-- Sync new fixtures (knockout) -->
+          <!-- Sync new fixtures (upcoming matchweeks) -->
           <div class="flex flex-wrap gap-3 pt-4 border-t border-ink-100">
             <div class="flex-1 min-w-[240px]">
               <h3 class="font-bold text-ink-900">Add new fixtures (non-destructive)</h3>
-              <p class="text-sm text-ink-500">Pulls all fixtures from the API and adds only new matches (e.g. knockout rounds). Existing data is preserved.</p>
+              <p class="text-sm text-ink-500">Pulls all fixtures from the API and adds only new matches (e.g. upcoming matchweeks). Existing data is preserved.</p>
             </div>
             <button @click="syncNewFixtures" :disabled="syncingFixtures || importing" class="rounded-xl bg-sky-50 text-sky-700 font-bold py-2 px-4 text-sm hover:bg-sky-100 transition disabled:opacity-50 self-end">
               {{ syncingFixtures ? 'Syncing...' : 'Sync new fixtures' }}
@@ -1516,11 +2898,13 @@ watch(activeTab, (tab) => {
           <div v-for="m in filteredMatches" :key="m.id" class="card p-5">
             <div class="flex flex-wrap items-center gap-4">
               <div class="flex items-center gap-3 flex-1 min-w-[260px]">
-                <div class="text-2xl">{{ m.home_team.flag_emoji }}</div>
+                <img v-if="m.home_team.logo_url" :src="m.home_team.logo_url" :alt="m.home_team.name" class="w-8 h-8 object-contain" />
+                <div v-else class="text-2xl">{{ m.home_team.flag_emoji }}</div>
                 <div class="font-bold text-ink-900">{{ m.home_team.code }}</div>
                 <span class="text-ink-300">vs</span>
                 <div class="font-bold text-ink-900">{{ m.away_team.code }}</div>
-                <div class="text-2xl">{{ m.away_team.flag_emoji }}</div>
+                <img v-if="m.away_team.logo_url" :src="m.away_team.logo_url" :alt="m.away_team.name" class="w-8 h-8 object-contain" />
+                <div v-else class="text-2xl">{{ m.away_team.flag_emoji }}</div>
                 <span :class="['pill ml-2', m.status === 'completed' ? 'bg-mint-100 text-mint-700' : 'bg-ink-100 text-ink-600']">
                   {{ m.status }}
                 </span>
@@ -1746,7 +3130,7 @@ watch(activeTab, (tab) => {
           <div class="flex items-center justify-between gap-3">
             <div>
               <h2 class="font-bold text-ink-900">Team elimination status</h2>
-              <p class="text-sm text-ink-500">Teams are auto-eliminated on knockout loss. Toggle manually here if needed.</p>
+              <p class="text-sm text-ink-500">Toggle a team's active status manually here if needed.</p>
             </div>
             <button @click="loadTeams" :disabled="teamsLoading" class="pill bg-ink-100 text-ink-700 hover:bg-ink-200 text-xs shrink-0">
               {{ teamsLoading ? 'Loading...' : 'Refresh' }}
@@ -1788,7 +3172,8 @@ watch(activeTab, (tab) => {
               ]"
             >
               <div class="flex items-center gap-2 min-w-0">
-                <span class="text-lg">{{ t.flag_emoji }}</span>
+                <img v-if="t.logo_url" :src="t.logo_url" :alt="t.code" class="w-5 h-5 object-contain" />
+                <span v-else class="text-lg">{{ t.flag_emoji }}</span>
                 <div class="min-w-0">
                   <div class="text-sm font-bold text-ink-900 truncate">{{ t.code }}</div>
                   <div v-if="t.is_eliminated" class="text-[10px] font-bold uppercase text-coral-600">Eliminated</div>
@@ -1920,12 +3305,28 @@ watch(activeTab, (tab) => {
         <div class="flex items-center justify-between gap-3">
           <div>
             <h2 class="text-xl font-extrabold text-ink-900">Platform reports</h2>
+            <p v-if="campaignConfig" class="text-sm text-mint-600 font-medium">Campaign: {{ campaignConfig.name }}</p>
             <p class="text-sm text-ink-500">Overview of user engagement and growth.</p>
           </div>
           <button @click="loadReports" :disabled="reportLoading" class="pill bg-ink-100 text-ink-700 hover:bg-ink-200 text-xs">
             {{ reportLoading ? 'Loading...' : 'Refresh' }}
           </button>
         </div>
+
+        <!-- Sub-report navigation -->
+        <div class="flex flex-wrap gap-1 bg-ink-100/60 p-1 rounded-xl w-fit">
+          <button
+            v-for="p in reportPanels"
+            :key="p.key"
+            @click="openReportPanel(p.key)"
+            :class="['px-4 py-1.5 rounded-lg text-xs font-semibold transition', reportPanel === p.key ? 'bg-white shadow-sm text-ink-900' : 'text-ink-600 hover:text-ink-900']"
+          >
+            {{ p.label }}
+          </button>
+        </div>
+
+        <!-- OVERVIEW PANEL -->
+        <div v-show="reportPanel === 'overview'" class="space-y-5">
 
         <!-- Date filter -->
         <div class="card p-4">
@@ -1957,41 +3358,67 @@ watch(activeTab, (tab) => {
         <div v-if="reportLoading && !reportData" class="card h-72 animate-pulse bg-ink-100/40"></div>
 
         <template v-else-if="reportData">
-          <!-- Summary cards -->
-          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            <div class="card p-4 text-center">
-              <div class="text-2xl font-extrabold text-ink-900">{{ reportData.totalUsers }}</div>
-              <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Total users</div>
+          <!-- All-time user base (inception to date) -->
+          <div>
+            <div class="text-xs font-semibold uppercase tracking-wide text-ink-400 mb-2">All-time user base (inception to date)</div>
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+              <div class="card p-4 text-center">
+                <div class="text-2xl font-extrabold text-ink-900">{{ reportData.totalUsers }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Total users</div>
+              </div>
+              <div class="card p-4 text-center">
+                <div class="text-2xl font-extrabold text-sky-600">{{ reportData.sycamoreUsers }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">With account no.</div>
+              </div>
+              <div class="card p-4 text-center">
+                <div class="text-2xl font-extrabold text-sun-600">{{ reportData.guestUsers }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">No account no.</div>
+              </div>
+              <div class="card p-4 text-center">
+                <div class="text-2xl font-extrabold text-mint-600">{{ reportData.activeCustomers }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Active customers</div>
+              </div>
+              <div v-if="reportData.isTournament" class="card p-4 text-center">
+                <div class="text-2xl font-extrabold text-coral-600">{{ reportData.usersWithTeam }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Backed a team</div>
+              </div>
             </div>
-            <div class="card p-4 text-center">
-              <div class="text-2xl font-extrabold text-sky-600">{{ reportData.sycamoreUsers }}</div>
-              <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">With account no.</div>
-            </div>
-            <div class="card p-4 text-center">
-              <div class="text-2xl font-extrabold text-sun-600">{{ reportData.guestUsers }}</div>
-              <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">No account no.</div>
-            </div>
-            <div class="card p-4 text-center">
-              <div class="text-2xl font-extrabold text-mint-600">{{ reportData.activeCustomers }}</div>
-              <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Active customers</div>
-            </div>
-            <div class="card p-4 text-center">
-              <div class="text-2xl font-extrabold text-coral-600">{{ reportData.usersWithTeam }}</div>
-              <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Backed a team</div>
-            </div>
-            <div class="card p-4 text-center">
-              <div class="text-2xl font-extrabold text-ink-700">{{ reportData.totalPredictions }}</div>
-              <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Predictions</div>
+          </div>
+
+          <!-- This campaign -->
+          <div>
+            <div class="text-xs font-semibold uppercase tracking-wide text-ink-400 mb-2">This campaign ({{ campaignConfig?.name || 'current' }})</div>
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+              <div class="card p-4 text-center">
+                <div class="text-2xl font-extrabold text-ink-900">{{ reportData.campaignUsers }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Joined players</div>
+              </div>
+              <div class="card p-4 text-center">
+                <div class="text-2xl font-extrabold text-sky-600">{{ reportData.campaignWithAccount }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">With account no.</div>
+              </div>
+              <div class="card p-4 text-center">
+                <div class="text-2xl font-extrabold text-sun-600">{{ reportData.campaignGuests }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">No account no.</div>
+              </div>
+              <div class="card p-4 text-center">
+                <div class="text-2xl font-extrabold text-mint-600">{{ reportData.campaignActive }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Active customers</div>
+              </div>
+              <div class="card p-4 text-center">
+                <div class="text-2xl font-extrabold text-ink-700">{{ reportData.totalPredictions }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Predictions</div>
+              </div>
             </div>
           </div>
 
           <!-- Additional stats -->
           <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            <div class="card p-4 text-center">
+            <div v-if="reportData.isTournament" class="card p-4 text-center">
               <div class="text-2xl font-extrabold text-teal-600">{{ reportData.savingsEnabled }}</div>
               <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Auto-savings on</div>
             </div>
-            <div class="card p-4 text-center">
+            <div v-if="reportData.isTournament" class="card p-4 text-center">
               <div class="text-2xl font-extrabold text-teal-700">&#8358;{{ reportData.totalSavingsAmount.toLocaleString() }}</div>
               <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Total savings amount</div>
             </div>
@@ -2053,7 +3480,8 @@ watch(activeTab, (tab) => {
                 class="flex items-center gap-3 p-2 rounded-lg"
                 :class="i < 3 ? 'bg-sky-50' : ''"
               >
-                <span class="text-lg">{{ t.flag_emoji }}</span>
+                <img v-if="t.logo_url" :src="t.logo_url" :alt="t.code" class="w-5 h-5 object-contain" />
+                <span v-else class="text-lg">{{ t.flag_emoji }}</span>
                 <span class="text-sm font-bold text-ink-900 w-12">{{ t.code }}</span>
                 <div class="flex-1 h-5 bg-ink-100 rounded overflow-hidden relative">
                   <div
@@ -2063,6 +3491,109 @@ watch(activeTab, (tab) => {
                   ></div>
                 </div>
                 <span class="text-sm font-bold text-ink-700 w-8 text-right tabular-nums">{{ t.count }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Feature engagement -->
+          <div class="card p-5 space-y-4">
+            <div>
+              <h3 class="font-bold text-ink-900">Feature engagement</h3>
+              <p class="text-sm text-ink-500">Activity across side quests, head-to-head, chips, streaks and groups.</p>
+            </div>
+
+            <div>
+              <h4 class="text-xs font-bold uppercase tracking-wide text-ink-500 mb-2">Side quests</h4>
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div class="rounded-lg bg-ink-50 p-3 text-center">
+                  <div class="text-xl font-extrabold text-ink-900">{{ reportData.questsTotal }}</div>
+                  <div class="text-xs text-ink-500">Quests set</div>
+                </div>
+                <div class="rounded-lg bg-ink-50 p-3 text-center">
+                  <div class="text-xl font-extrabold text-mint-600">{{ reportData.questsResolved }}</div>
+                  <div class="text-xs text-ink-500">Resolved</div>
+                </div>
+                <div class="rounded-lg bg-ink-50 p-3 text-center">
+                  <div class="text-xl font-extrabold text-ink-700">{{ reportData.questEntriesTotal }}</div>
+                  <div class="text-xs text-ink-500">Answers</div>
+                </div>
+                <div class="rounded-lg bg-ink-50 p-3 text-center">
+                  <div class="text-xl font-extrabold text-mint-600">{{ reportData.questEntriesCorrect }}</div>
+                  <div class="text-xs text-ink-500">Correct{{ reportData.questEntriesTotal ? ' (' + Math.round(reportData.questEntriesCorrect / reportData.questEntriesTotal * 100) + '%)' : '' }}</div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h4 class="text-xs font-bold uppercase tracking-wide text-ink-500 mb-2">Head-to-head</h4>
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div class="rounded-lg bg-ink-50 p-3 text-center">
+                  <div class="text-xl font-extrabold text-ink-900">{{ reportData.h2hOptInsTotal }}</div>
+                  <div class="text-xs text-ink-500">Opt-ins</div>
+                </div>
+                <div class="rounded-lg bg-ink-50 p-3 text-center">
+                  <div class="text-xl font-extrabold text-ink-700">{{ reportData.h2hPlayers }}</div>
+                  <div class="text-xs text-ink-500">Players</div>
+                </div>
+                <div class="rounded-lg bg-ink-50 p-3 text-center">
+                  <div class="text-xl font-extrabold text-ink-900">{{ reportData.h2hPairingsTotal }}</div>
+                  <div class="text-xs text-ink-500">Matchups</div>
+                </div>
+                <div class="rounded-lg bg-ink-50 p-3 text-center">
+                  <div class="text-xl font-extrabold text-mint-600">{{ reportData.h2hCompleted }}</div>
+                  <div class="text-xs text-ink-500">Completed</div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h4 class="text-xs font-bold uppercase tracking-wide text-ink-500 mb-2">Streaks</h4>
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div class="rounded-lg bg-ink-50 p-3 text-center">
+                  <div class="text-xl font-extrabold text-ink-900">{{ reportData.streakUsers }}</div>
+                  <div class="text-xs text-ink-500">Players on a streak</div>
+                </div>
+                <div class="rounded-lg bg-ink-50 p-3 text-center">
+                  <div class="text-xl font-extrabold text-sun-600">{{ reportData.longestCurrentStreak }}</div>
+                  <div class="text-xs text-ink-500">Longest active</div>
+                </div>
+                <div class="rounded-lg bg-ink-50 p-3 text-center">
+                  <div class="text-xl font-extrabold text-coral-500">{{ reportData.longestEverStreak }}</div>
+                  <div class="text-xs text-ink-500">Longest ever</div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h4 class="text-xs font-bold uppercase tracking-wide text-ink-500 mb-2">Groups &amp; roster</h4>
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div class="rounded-lg bg-ink-50 p-3 text-center">
+                  <div class="text-xl font-extrabold text-ink-900">{{ reportData.groupsTotal }}</div>
+                  <div class="text-xs text-ink-500">Groups created</div>
+                </div>
+                <div class="rounded-lg bg-ink-50 p-3 text-center">
+                  <div class="text-xl font-extrabold text-ink-700">{{ reportData.groupMembersTotal }}</div>
+                  <div class="text-xs text-ink-500">Group memberships</div>
+                </div>
+                <div class="rounded-lg bg-ink-50 p-3 text-center">
+                  <div class="text-xl font-extrabold text-ink-700">{{ reportData.playersRoster }}</div>
+                  <div class="text-xs text-ink-500">Players in roster</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Chip usage -->
+          <div v-if="reportData.chipsTotal > 0" class="card p-5 space-y-3">
+            <h3 class="font-bold text-ink-900">Chip usage</h3>
+            <p class="text-sm text-ink-500">{{ reportData.chipsTotal }} chip{{ reportData.chipsTotal !== 1 ? 's' : '' }} played across all types.</p>
+            <div class="space-y-2">
+              <div v-for="c in reportData.chipsByType" :key="c.type" class="flex items-center gap-3">
+                <span class="text-sm font-bold text-ink-900 w-28 shrink-0">{{ c.type }}</span>
+                <div class="flex-1 h-5 bg-ink-100 rounded overflow-hidden">
+                  <div class="h-full bg-sky-500 rounded" :style="{ width: (reportData.chipsByType[0].count ? c.count / reportData.chipsByType[0].count * 100 : 0) + '%' }"></div>
+                </div>
+                <span class="text-sm font-bold text-ink-700 w-8 text-right tabular-nums">{{ c.count }}</span>
               </div>
             </div>
           </div>
@@ -2092,7 +3623,7 @@ watch(activeTab, (tab) => {
                   <span class="absolute inset-0 flex items-center justify-center text-xs font-bold" :class="reportData.activeCustomers > reportData.totalUsers * 0.5 ? 'text-white' : 'text-ink-700'">{{ reportData.activeCustomers }} ({{ reportData.totalUsers ? Math.round(reportData.activeCustomers / reportData.totalUsers * 100) : 0 }}%)</span>
                 </div>
               </div>
-              <div class="flex items-center gap-3">
+              <div v-if="reportData.isTournament" class="flex items-center gap-3">
                 <div class="w-32 text-sm text-ink-600">Backed team</div>
                 <div class="flex-1 h-7 bg-ink-100 rounded-lg overflow-hidden relative">
                   <div class="h-full bg-coral-400 rounded-lg" :style="{ width: reportData.totalUsers ? (reportData.usersWithTeam / reportData.totalUsers * 100) + '%' : '0%' }"></div>
@@ -2107,7 +3638,7 @@ watch(activeTab, (tab) => {
             <div class="flex items-center justify-between">
               <div>
                 <h3 class="font-bold text-ink-900">Organic acquisition</h3>
-                <p class="text-sm text-ink-500">Users who signed up on the predictor after launch (post Jun 8) and never transacted on Sycamore.</p>
+                <p class="text-sm text-ink-500">Users who signed up on the predictor after the campaign launched and never transacted on Sycamore.</p>
               </div>
               <button
                 @click="exportAcquisitionCsv"
@@ -2257,6 +3788,228 @@ watch(activeTab, (tab) => {
             </div>
           </div>
         </template>
+        </div>
+        <!-- /OVERVIEW PANEL -->
+
+        <!-- PARTICIPATION PANEL -->
+        <div v-if="reportPanel === 'participation'" class="space-y-5">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h3 class="font-bold text-ink-900">Gameweek participation &amp; conversion</h3>
+              <p class="text-sm text-ink-500">Active predictors each gameweek, split into first-time and returning players, plus account-link conversion.</p>
+            </div>
+            <div class="flex gap-2 shrink-0">
+              <button @click="loadNamedReport('participation')" :disabled="namedReportLoading" class="pill bg-ink-100 text-ink-700 hover:bg-ink-200 text-xs">{{ namedReportLoading ? 'Loading...' : 'Refresh' }}</button>
+              <button @click="exportParticipationCsv" :disabled="!participationReport" class="pill bg-sky-100 text-sky-700 hover:bg-sky-200 text-xs">Export CSV</button>
+            </div>
+          </div>
+          <div v-if="namedReportError" class="card p-4 text-sm text-coral-600">{{ namedReportError }}</div>
+          <div v-if="namedReportLoading && !participationReport" class="card h-40 animate-pulse bg-ink-100/40"></div>
+          <template v-else-if="participationReport">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div class="card p-4 text-center">
+                <div class="text-2xl font-extrabold text-ink-900">{{ participationReport.account_links.total_participants }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Participants</div>
+              </div>
+              <div class="card p-4 text-center">
+                <div class="text-2xl font-extrabold text-sky-600">{{ participationReport.account_links.linked_accounts }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Linked accounts</div>
+              </div>
+              <div class="card p-4 text-center">
+                <div class="text-2xl font-extrabold text-mint-600">{{ participationReport.account_links.link_rate_pct }}%</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Link rate</div>
+              </div>
+            </div>
+            <div class="card p-5 space-y-3">
+              <h4 class="font-bold text-ink-900">By gameweek</h4>
+              <div v-if="!participationReport.by_week.length" class="text-sm text-ink-400">No predictions recorded yet.</div>
+              <div v-else class="overflow-auto rounded-xl border border-ink-100">
+                <table class="w-full text-sm">
+                  <thead class="bg-ink-50 text-ink-500 text-xs uppercase">
+                    <tr>
+                      <th class="text-left px-3 py-2">Gameweek</th>
+                      <th class="text-right px-3 py-2">Active</th>
+                      <th class="text-right px-3 py-2">First-time</th>
+                      <th class="text-right px-3 py-2">Returning</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-ink-100">
+                    <tr v-for="w in participationReport.by_week" :key="w.matchweek">
+                      <td class="px-3 py-2 font-semibold text-ink-900">MW{{ w.matchweek }}</td>
+                      <td class="px-3 py-2 text-right tabular-nums font-bold">{{ w.active_predictors }}</td>
+                      <td class="px-3 py-2 text-right tabular-nums text-sun-600">{{ w.new_predictors }}</td>
+                      <td class="px-3 py-2 text-right tabular-nums text-mint-600">{{ w.returning_predictors }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- SAVINGS PANEL -->
+        <div v-if="reportPanel === 'savings'" class="space-y-5">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h3 class="font-bold text-ink-900">"Back A Team" savings performance</h3>
+              <p class="text-sm text-ink-500">Active savings plans, auto-save results and failure reasons (health check on the auto-save pilot).</p>
+            </div>
+            <div class="flex gap-2 shrink-0">
+              <button @click="loadNamedReport('savings')" :disabled="namedReportLoading" class="pill bg-ink-100 text-ink-700 hover:bg-ink-200 text-xs">{{ namedReportLoading ? 'Loading...' : 'Refresh' }}</button>
+              <button @click="exportSavingsCsv" :disabled="!savingsReport" class="pill bg-sky-100 text-sky-700 hover:bg-sky-200 text-xs">Export CSV</button>
+            </div>
+          </div>
+          <div v-if="namedReportError" class="card p-4 text-sm text-coral-600">{{ namedReportError }}</div>
+          <div v-if="namedReportLoading && !savingsReport" class="card h-40 animate-pulse bg-ink-100/40"></div>
+          <template v-else-if="savingsReport">
+            <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <div class="card p-4 text-center"><div class="text-2xl font-extrabold text-ink-900">{{ savingsReport.active_plans }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Active plans</div></div>
+              <div class="card p-4 text-center"><div class="text-2xl font-extrabold text-mint-600">{{ savingsReport.successful_triggers }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Successful</div></div>
+              <div class="card p-4 text-center"><div class="text-2xl font-extrabold text-coral-500">{{ savingsReport.failed_triggers }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Failed</div></div>
+              <div class="card p-4 text-center"><div class="text-2xl font-extrabold text-sun-600">{{ savingsReport.pending_triggers }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Pending</div></div>
+              <div class="card p-4 text-center"><div class="text-2xl font-extrabold text-teal-700">&#8358;{{ Number(savingsReport.total_balance).toLocaleString() }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Total saved</div></div>
+            </div>
+            <div v-if="savingsReport.by_reason.length" class="card p-5 space-y-3">
+              <h4 class="font-bold text-ink-900">Failure reasons</h4>
+              <div v-for="f in savingsReport.by_reason" :key="f.reason" class="flex items-center gap-3">
+                <span class="text-sm text-ink-700 flex-1">{{ f.reason }}</span>
+                <span class="text-sm font-bold text-coral-600 tabular-nums">{{ f.count }}</span>
+              </div>
+            </div>
+            <div class="card p-5 space-y-3">
+              <h4 class="font-bold text-ink-900">Recent triggers</h4>
+              <div v-if="!savingsReport.recent.length" class="text-sm text-ink-400">No auto-save activity recorded yet.</div>
+              <div v-else class="overflow-auto rounded-xl border border-ink-100 max-h-80">
+                <table class="w-full text-sm">
+                  <thead class="bg-ink-50 text-ink-500 text-xs uppercase sticky top-0">
+                    <tr>
+                      <th class="text-left px-3 py-2">When</th>
+                      <th class="text-left px-3 py-2">User</th>
+                      <th class="text-left px-3 py-2">Status</th>
+                      <th class="text-right px-3 py-2">Amount</th>
+                      <th class="text-left px-3 py-2">Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-ink-100">
+                    <tr v-for="(x, i) in savingsReport.recent" :key="i">
+                      <td class="px-3 py-2 text-xs text-ink-500">{{ (x.triggered_at || '').slice(0, 16).replace('T', ' ') }}</td>
+                      <td class="px-3 py-2 text-xs font-semibold text-ink-800">{{ x.username || '-' }}</td>
+                      <td class="px-3 py-2 text-xs"><span :class="x.status === 'completed' ? 'text-mint-600' : x.status === 'failed' ? 'text-coral-600' : 'text-sun-600'" class="font-bold">{{ x.status }}</span></td>
+                      <td class="px-3 py-2 text-right tabular-nums">{{ x.amount != null ? '&#8358;' + Number(x.amount).toLocaleString() : '-' }}</td>
+                      <td class="px-3 py-2 text-xs text-ink-500">{{ x.failure_reason || '-' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- LEAGUES PANEL -->
+        <div v-if="reportPanel === 'leagues'" class="space-y-5">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h3 class="font-bold text-ink-900">Private league viral coefficient</h3>
+              <p class="text-sm text-ink-500">Private leagues created and members joining via invite.</p>
+            </div>
+            <button @click="loadNamedReport('leagues')" :disabled="namedReportLoading" class="pill bg-ink-100 text-ink-700 hover:bg-ink-200 text-xs shrink-0">{{ namedReportLoading ? 'Loading...' : 'Refresh' }}</button>
+          </div>
+          <div v-if="namedReportError" class="card p-4 text-sm text-coral-600">{{ namedReportError }}</div>
+          <div v-if="namedReportLoading && !leaguesReport" class="card h-40 animate-pulse bg-ink-100/40"></div>
+          <template v-else-if="leaguesReport">
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div class="card p-4 text-center"><div class="text-2xl font-extrabold text-ink-900">{{ leaguesReport.leagues_created }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Leagues created</div></div>
+              <div class="card p-4 text-center"><div class="text-2xl font-extrabold text-sky-600">{{ leaguesReport.total_members }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Total members</div></div>
+              <div class="card p-4 text-center"><div class="text-2xl font-extrabold text-mint-600">{{ leaguesReport.joins_via_invite }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Joined via invite</div></div>
+              <div class="card p-4 text-center"><div class="text-2xl font-extrabold text-coral-500">{{ leaguesReport.avg_members_per_league }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Avg members/league</div></div>
+            </div>
+            <div class="card p-4 bg-sun-50 border border-sun-100">
+              <p class="text-sm text-ink-600">{{ leaguesReport.note }}</p>
+            </div>
+          </template>
+        </div>
+
+        <!-- AUDIT PANEL -->
+        <div v-if="reportPanel === 'audit'" class="space-y-5">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h3 class="font-bold text-ink-900">Leaderboard integrity &amp; timestamp audit</h3>
+              <p class="text-sm text-ink-500">Prediction timestamps and applied power-ups, with a tie-break ranking on earliest cumulative prediction time.</p>
+            </div>
+            <div class="flex items-end gap-2 shrink-0">
+              <div>
+                <label class="label !mb-1">Gameweek</label>
+                <input v-model="auditMatchweek" type="number" min="1" placeholder="All" class="input !py-2 w-24" />
+              </div>
+              <button @click="loadNamedReport('audit')" :disabled="namedReportLoading" class="btn-primary !py-2 !px-4 text-sm">{{ namedReportLoading ? 'Loading...' : 'Apply' }}</button>
+            </div>
+          </div>
+          <div v-if="namedReportError" class="card p-4 text-sm text-coral-600">{{ namedReportError }}</div>
+          <div v-if="namedReportLoading && !auditReport" class="card h-40 animate-pulse bg-ink-100/40"></div>
+          <template v-else-if="auditReport">
+            <div class="card p-5 space-y-3">
+              <div class="flex items-center justify-between gap-3">
+                <h4 class="font-bold text-ink-900">Tie-break ranking</h4>
+                <button @click="exportAuditRankingCsv" :disabled="!auditReport.ranking.length" class="pill bg-sky-100 text-sky-700 hover:bg-sky-200 text-xs">Export CSV</button>
+              </div>
+              <p class="text-xs text-ink-500">Ordered by total points, then earliest cumulative prediction timestamp (lower = earlier).</p>
+              <div v-if="!auditReport.ranking.length" class="text-sm text-ink-400">No ranking data yet.</div>
+              <div v-else class="overflow-auto rounded-xl border border-ink-100 max-h-80">
+                <table class="w-full text-sm">
+                  <thead class="bg-ink-50 text-ink-500 text-xs uppercase sticky top-0">
+                    <tr>
+                      <th class="text-left px-3 py-2">#</th>
+                      <th class="text-left px-3 py-2">User</th>
+                      <th class="text-right px-3 py-2">Points</th>
+                      <th class="text-right px-3 py-2">Picks</th>
+                      <th class="text-left px-3 py-2">First pick</th>
+                      <th class="text-right px-3 py-2">Cumulative (s)</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-ink-100">
+                    <tr v-for="(x, i) in auditReport.ranking" :key="i">
+                      <td class="px-3 py-2 font-bold text-ink-400">{{ i + 1 }}</td>
+                      <td class="px-3 py-2 text-xs font-semibold text-ink-800">{{ x.username || x.email || '-' }}</td>
+                      <td class="px-3 py-2 text-right tabular-nums font-bold">{{ x.total_points }}</td>
+                      <td class="px-3 py-2 text-right tabular-nums">{{ x.predictions_count }}</td>
+                      <td class="px-3 py-2 text-xs text-ink-500">{{ (x.first_prediction_at || '').slice(0, 16).replace('T', ' ') }}</td>
+                      <td class="px-3 py-2 text-right tabular-nums text-ink-400">{{ x.cumulative_timestamp_epoch }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="card p-5 space-y-3">
+              <div class="flex items-center justify-between gap-3">
+                <h4 class="font-bold text-ink-900">Prediction timestamp log</h4>
+                <button @click="exportAuditCsv" :disabled="!auditReport.rows.length" class="pill bg-sky-100 text-sky-700 hover:bg-sky-200 text-xs">Export CSV</button>
+              </div>
+              <div v-if="!auditReport.rows.length" class="text-sm text-ink-400">No predictions for this selection.</div>
+              <div v-else class="overflow-auto rounded-xl border border-ink-100 max-h-96">
+                <table class="w-full text-sm">
+                  <thead class="bg-ink-50 text-ink-500 text-xs uppercase sticky top-0">
+                    <tr>
+                      <th class="text-left px-3 py-2">User</th>
+                      <th class="text-left px-3 py-2">MW</th>
+                      <th class="text-left px-3 py-2">Fixture</th>
+                      <th class="text-left px-3 py-2">Predicted at</th>
+                      <th class="text-left px-3 py-2">Power-ups</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-ink-100">
+                    <tr v-for="(x, i) in auditReport.rows" :key="i">
+                      <td class="px-3 py-2 text-xs font-semibold text-ink-800">{{ x.username || '-' }}</td>
+                      <td class="px-3 py-2 text-xs">{{ x.matchweek }}</td>
+                      <td class="px-3 py-2 text-xs text-ink-600">{{ x.fixture }}</td>
+                      <td class="px-3 py-2 text-xs text-ink-500">{{ (x.predicted_at || '').slice(0, 19).replace('T', ' ') }}</td>
+                      <td class="px-3 py-2 text-xs">{{ x.power_ups || '-' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+        </div>
       </div>
 
       <!-- ADMINS TAB -->

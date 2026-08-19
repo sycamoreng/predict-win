@@ -2,7 +2,8 @@
 definePageMeta({ middleware: 'auth' })
 
 const supabase = useSupabase()
-const { user, isGuest, hasAccount, isStaff, refreshUser, trackPulseEvent } = useAuth()
+const { user, isGuest, hasAccount, isStaff, isEnrolled, joinCampaign, refreshUser, trackPulseEvent, campaignPoints } = useAuth()
+const { campaignId } = useCampaign()
 const { config: campaign, load: loadCampaign } = useCampaign()
 
 type LeaderboardMode = 'week' | 'overall'
@@ -14,6 +15,16 @@ const staffPlayers = ref<any[]>([])
 const staffPlayersOverall = ref<any[]>([])
 const loading = ref(true)
 const activeTab = ref<'public' | 'staff'>('public')
+const streaks = ref<Record<string, number>>({})
+
+const joining = ref(false)
+const handleJoin = async () => {
+  if (!campaignId.value) return
+  joining.value = true
+  await joinCampaign(campaignId.value)
+  await load()
+  joining.value = false
+}
 
 const weekStart = ref('')
 const weekEnd = ref('')
@@ -39,18 +50,28 @@ const loadWeekBounds = async () => {
 }
 
 const loadOverall = async () => {
+  if (!campaignId.value) return
   const { data } = await supabase
-    .from('synced_users')
-    .select('id, name, username, email, total_points, active_customer_flag, is_account_valid, is_staff, exact_scorelines_count, correct_predictions_count, backed_team:teams!synced_users_backed_team_id_fkey(flag_emoji, code)')
-    .eq('active_customer_flag', true)
-    .eq('is_account_valid', true)
-    .eq('is_staff', false)
+    .from('campaign_participants')
+    .select('id, user_id, total_points, correct_predictions_count, exact_scorelines_count, backed_team:teams!campaign_participants_backed_team_id_fkey(flag_emoji, code, logo_url), user:synced_users!campaign_participants_user_id_fkey(id, name, username, email, active_customer_flag, is_account_valid, is_staff)')
+    .eq('campaign_id', campaignId.value)
     .order('total_points', { ascending: false })
     .order('exact_scorelines_count', { ascending: false })
     .order('correct_predictions_count', { ascending: false })
-    .order('name', { ascending: true })
-    .limit(100)
-  players.value = data || []
+    .limit(200)
+  const requireActive = campaign.value.require_eligibility_leaderboard
+  const mapped = (data || []).filter((p: any) => (!requireActive || (p.user?.active_customer_flag && p.user?.is_account_valid)) && !p.user?.is_staff).map((p: any) => ({
+    id: p.user.id,
+    name: p.user.name,
+    username: p.user.username,
+    email: p.user.email,
+    is_staff: p.user.is_staff,
+    total_points: p.total_points,
+    exact_scorelines_count: p.exact_scorelines_count,
+    correct_predictions_count: p.correct_predictions_count,
+    backed_team: p.backed_team,
+  })).slice(0, 100)
+  players.value = mapped
 }
 
 const loadWeekly = async () => {
@@ -84,20 +105,29 @@ const loadStaff = async () => {
 }
 
 const loadStaffOverall = async () => {
-  if (!isStaff.value) return
+  if (!isStaff.value || !campaignId.value) return
   const { data } = await supabase
-    .from('synced_users')
-    .select('id, name, username, email, total_points, is_staff, exact_scorelines_count, correct_predictions_count, backed_team:teams!synced_users_backed_team_id_fkey(flag_emoji, code)')
-    .eq('is_staff', true)
+    .from('campaign_participants')
+    .select('id, user_id, total_points, correct_predictions_count, exact_scorelines_count, backed_team:teams!campaign_participants_backed_team_id_fkey(flag_emoji, code, logo_url), user:synced_users!campaign_participants_user_id_fkey(id, name, username, email, is_staff)')
+    .eq('campaign_id', campaignId.value)
     .order('total_points', { ascending: false })
     .order('exact_scorelines_count', { ascending: false })
     .order('correct_predictions_count', { ascending: false })
-    .order('name', { ascending: true })
-    .limit(50)
-  staffPlayersOverall.value = data || []
+    .limit(100)
+  staffPlayersOverall.value = (data || []).filter((p: any) => p.user?.is_staff).map((p: any) => ({
+    id: p.user.id,
+    name: p.user.name,
+    username: p.user.username,
+    email: p.user.email,
+    is_staff: true,
+    total_points: p.total_points,
+    exact_scorelines_count: p.exact_scorelines_count,
+    correct_predictions_count: p.correct_predictions_count,
+    backed_team: p.backed_team,
+  })).slice(0, 50)
 }
 
-const tournamentEnded = computed(() => campaign.value.tournament_ended === true)
+const tournamentEnded = computed(() => campaign.value.campaign_ended === true)
 
 const overallChampion = computed(() => {
   if (!tournamentEnded.value || players.value.length === 0) return null
@@ -112,12 +142,19 @@ const staffChampion = computed(() => {
 const load = async () => {
   await refreshUser()
   await loadCampaign()
-  if (isGuest.value || !hasAccount.value || !campaign.value.leaderboard_enabled) {
+  if (!campaign.value.leaderboard_enabled || (campaign.value.require_eligibility_leaderboard && (isGuest.value || !hasAccount.value))) {
     loading.value = false
     return
   }
   loading.value = true
   await Promise.all([loadWeekBounds(), loadOverall(), loadWeekly(), loadStaff(), loadStaffOverall()])
+  // Load streaks for all players
+  if (campaignId.value) {
+    const { data: streakData } = await supabase.from('user_streaks').select('user_id, current_streak').eq('campaign_id', campaignId.value).gte('current_streak', 3)
+    const map: Record<string, number> = {}
+    for (const s of streakData || []) map[s.user_id] = s.current_streak
+    streaks.value = map
+  }
   loading.value = false
 }
 
@@ -181,14 +218,14 @@ const podiumColors = [
 const showShareRank = ref(false)
 const rankShareText = computed(() => {
   if (!myRank.value || !user.value) return ''
-  const pts = mode.value === 'week' ? myWeekPoints.value : user.value.total_points
+  const pts = mode.value === 'week' ? myWeekPoints.value : campaignPoints.value
   const label = mode.value === 'week' ? 'this week' : 'overall'
-  return `I'm ranked #${myRank.value} with ${pts} points ${label} on the Sycamore Predictor League! Can you beat me?\n\n#SycamorePredictor #WorldCup2026`
+  return `I'm ranked #${myRank.value} with ${pts} points ${label} on the Sycamore Predictor League! Can you beat me?\n\n#SycamorePredictor`
 })
 
 const rankImageProps = computed(() => {
   if (!myRank.value || !user.value) return undefined
-  const pts = mode.value === 'week' ? myWeekPoints.value : user.value.total_points
+  const pts = mode.value === 'week' ? myWeekPoints.value : campaignPoints.value
   const label = mode.value === 'week' ? `Week ${weekNumber.value} leaderboard` : 'Overall leaderboard'
   return {
     variant: 'rank' as const,
@@ -238,7 +275,7 @@ onMounted(() => {
     </template>
 
     <!-- Guest users or users without account numbers -->
-    <template v-else-if="isGuest || !hasAccount">
+    <template v-else-if="campaign.require_eligibility_leaderboard && (isGuest || !hasAccount)">
       <div class="card p-12 sm:p-16 text-center max-w-lg mx-auto">
         <div class="w-16 h-16 rounded-2xl bg-sun-100 mx-auto grid place-items-center mb-5">
           <svg class="w-8 h-8 text-sun-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -250,13 +287,36 @@ onMounted(() => {
           The leaderboard is available to Sycamore customers with an account number. Sign up on the Sycamore app to see rankings and compete for prizes.
         </p>
         <a
-          href="https://appsflyer.sycamore.ng/Qthc/worldcup_website"
+          href="https://appsflyer.sycamore.ng/Qthc/EPL"
           target="_blank"
           rel="noreferrer"
           class="btn-primary px-8 py-3 text-sm inline-block mt-6"
         >
           Get the Sycamore App
         </a>
+      </div>
+    </template>
+
+    <!-- Not enrolled in campaign -->
+    <template v-else-if="!isEnrolled">
+      <div class="card p-12 sm:p-16 text-center max-w-lg mx-auto animate-fade-up">
+        <div class="w-16 h-16 rounded-2xl bg-sky-100 mx-auto grid place-items-center mb-5">
+          <svg class="w-8 h-8 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/>
+          </svg>
+        </div>
+        <h1 class="text-2xl font-extrabold text-ink-900 mb-2">Join {{ campaign.name }}</h1>
+        <p class="text-sm text-ink-600 leading-relaxed max-w-sm mx-auto">
+          Join this campaign to appear on the leaderboard, compete for weekly prizes, and track your ranking.
+        </p>
+        <button
+          @click="handleJoin"
+          :disabled="joining"
+          class="btn-primary px-8 py-3 text-sm inline-flex items-center gap-2 mt-6"
+        >
+          <span v-if="joining" class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+          {{ joining ? 'Joining...' : 'Join campaign' }}
+        </button>
       </div>
     </template>
 
@@ -297,7 +357,7 @@ onMounted(() => {
             <div class="w-px h-10 bg-ink-100"></div>
             <div>
               <div class="text-xs uppercase tracking-wider font-semibold text-ink-400">{{ mode === 'week' ? 'Week pts' : 'Total pts' }}</div>
-              <div class="text-2xl font-extrabold text-mint-600">{{ mode === 'week' ? myWeekPoints : user.total_points }}</div>
+              <div class="text-2xl font-extrabold text-mint-600">{{ mode === 'week' ? myWeekPoints : campaignPoints }}</div>
             </div>
             <div class="w-px h-10 bg-ink-100"></div>
             <button
@@ -390,7 +450,12 @@ onMounted(() => {
               <div class="text-3xl sm:text-4xl mb-2">
                 {{ ['&#129352;', '&#129351;', '&#129353;'][i] }}
               </div>
-              <div class="font-bold text-ink-900 truncate lowercase">{{ displayUsername(p) }}</div>
+              <div class="font-bold text-ink-900 truncate lowercase">
+                {{ displayUsername(p) }}
+                <span v-if="streaks[p.user_id || p.id] >= 10">&#x1F31F;&#x1F525;</span>
+                <span v-else-if="streaks[p.user_id || p.id] >= 5">&#x1F535;&#x1F525;</span>
+                <span v-else-if="streaks[p.user_id || p.id] >= 3">&#x1F525;</span>
+              </div>
               <div class="text-xs text-ink-400 mb-3">#{{ [2, 1, 3][i] }}</div>
               <div class="inline-flex pill bg-sky-50 text-sky-700 text-base">{{ p.total_points }} pts</div>
             </div>
@@ -433,9 +498,12 @@ onMounted(() => {
                   {{ displayRank(currentPlayers, i) }}
                 </div>
                 <div class="flex-1 min-w-0">
-                  <div class="font-semibold text-ink-900 truncate lowercase">
+                  <div class="font-semibold text-ink-900 truncate lowercase flex items-center gap-1">
                     {{ displayUsername(p) }}
-                    <span v-if="user && p.id === user.id" class="ml-2 pill bg-sky-100 text-sky-700 text-[10px]">You</span>
+                    <span v-if="streaks[p.user_id || p.id] >= 10" class="text-sm" title="Legendary streak">&#x1F31F;&#x1F525;</span>
+                    <span v-else-if="streaks[p.user_id || p.id] >= 5" class="text-sm" title="Hot streak">&#x1F535;&#x1F525;</span>
+                    <span v-else-if="streaks[p.user_id || p.id] >= 3" class="text-sm" title="On a streak">&#x1F525;</span>
+                    <span v-if="user && p.id === user.id" class="ml-1 pill bg-sky-100 text-sky-700 text-[10px]">You</span>
                   </div>
                   <div v-if="mode === 'week'" class="text-xs text-ink-500 truncate">
                     {{ p.correct_predictions || 0 }} correct · {{ p.exact_scorelines || 0 }} exact

@@ -3,6 +3,7 @@ definePageMeta({ middleware: 'auth' })
 
 const supabase = useSupabase()
 const { user, trackPulseEvent } = useAuth()
+const { campaignId, load: loadCampaign } = useCampaign()
 
 type FilterMode = 'all' | 'day' | 'week'
 const filterMode = ref<FilterMode>('all')
@@ -56,7 +57,8 @@ const loadPredictions = async () => {
   if (!user.value) return
   loading.value = true
 
-  const { data } = await supabase
+  await loadCampaign()
+  const query = supabase
     .from('predictions')
     .select(`
       id,
@@ -82,6 +84,10 @@ const loadPredictions = async () => {
         away_team:teams!matches_away_team_id_fkey(id, name, code, flag_emoji)
       )
     `)
+  if (campaignId.value) {
+    query.eq('campaign_id', campaignId.value)
+  }
+  const { data } = await query
     .eq('user_id', user.value.id)
     .order('created_at', { ascending: false })
 

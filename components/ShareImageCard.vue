@@ -18,6 +18,7 @@ const props = defineProps<{
   achievementTitle?: string
   achievementIcon?: string
   achievementDescription?: string
+  achievementTier?: 'bronze' | 'silver' | 'gold' | 'legend'
   // Rank variant
   rankPosition?: number
   rankPoints?: number
@@ -38,6 +39,15 @@ const winnerLabel = computed(() => {
   if (props.predictedWinner === props.homeTeam.code || props.predictedWinner === props.homeTeam.name) return props.homeTeam.name
   return props.awayTeam.name
 })
+
+const tierStyles = {
+  bronze: { label: 'Bronze', ring: 'border-amber-400/30 from-amber-500/10 to-amber-700/5', glow: 'bg-amber-500/20', text: 'text-amber-300', badge: 'bg-amber-400/15 text-amber-200' },
+  silver: { label: 'Silver', ring: 'border-slate-300/30 from-slate-300/10 to-slate-500/5', glow: 'bg-slate-300/20', text: 'text-slate-200', badge: 'bg-slate-300/15 text-slate-100' },
+  gold: { label: 'Gold', ring: 'border-sun-400/30 from-sun-400/10 to-sun-600/5', glow: 'bg-sun-400/25', text: 'text-sun-300', badge: 'bg-sun-400/15 text-sun-200' },
+  legend: { label: 'Legendary', ring: 'border-mint-400/30 from-mint-400/10 to-emerald-700/5', glow: 'bg-mint-400/25', text: 'text-mint-300', badge: 'bg-mint-400/15 text-mint-100' },
+} as const
+
+const tier = computed(() => tierStyles[props.achievementTier || 'silver'])
 </script>
 
 <template>
@@ -163,11 +173,14 @@ const winnerLabel = computed(() => {
         </div>
 
         <div class="mt-auto mb-auto flex flex-col items-center justify-center text-center">
-          <div class="bg-white/5 border border-white/10 rounded-3xl px-12 py-10 max-w-[420px]">
-            <div class="text-7xl mb-4">{{ achievementIcon }}</div>
-            <div class="text-xs font-bold text-sky-300 uppercase tracking-wider mb-2">Achievement Unlocked</div>
-            <div class="text-2xl font-extrabold text-white leading-tight">{{ achievementTitle }}</div>
-            <div v-if="achievementDescription" class="text-sm text-ink-300 mt-2 leading-relaxed">{{ achievementDescription }}</div>
+          <div class="relative bg-gradient-to-b border rounded-3xl px-12 py-10 max-w-[420px]" :class="tier.ring">
+            <div class="absolute -top-16 left-1/2 -translate-x-1/2 w-40 h-40 rounded-full blur-2xl" :class="tier.glow"></div>
+            <div class="relative">
+              <div class="text-7xl mb-4">{{ achievementIcon }}</div>
+              <div class="inline-block text-[11px] font-black uppercase tracking-widest mb-3 px-3 py-1 rounded-full" :class="tier.badge">{{ tier.label }} &middot; Unlocked</div>
+              <div class="text-2xl font-extrabold text-white leading-tight">{{ achievementTitle }}</div>
+              <div v-if="achievementDescription" class="text-sm text-ink-300 mt-2 leading-relaxed">{{ achievementDescription }}</div>
+            </div>
           </div>
         </div>
       </template>

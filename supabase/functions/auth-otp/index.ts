@@ -216,7 +216,7 @@ Deno.serve(async (req: Request) => {
         .eq("email", email)
         .maybeSingle();
 
-      if (user) {
+      if (user && user.account_number) {
         // Existing Sycamore user signing in -- identify in Pulse
         const pulseId = user.core_user_id || email;
         pulseIdentify(pulseId, {
@@ -232,40 +232,62 @@ Deno.serve(async (req: Request) => {
           is_existing_sycamore_user: true,
         }).catch(() => {});
 
-        return new Response(JSON.stringify({ success: true, user }), {
+        return new Response(JSON.stringify({ success: true, user: { ...user, is_guest: false } }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
-      // Guest user (no Sycamore account) -- first encounter is predictor app
-      const guestId = `guest_${email}`;
-      pulseIdentify(guestId, {
+      // Guest user (no Sycamore account) -- first encounter is predictor app.
+      // Ensure a real saved player record exists so guests can join campaigns.
+      let guestUser = user;
+      if (!guestUser) {
+        const { data: inserted, error: insertErr } = await supabase
+          .from("synced_users")
+          .insert({
+            email,
+            name: email.split("@")[0],
+            phone_number: "",
+            account_number: null,
+            active_customer_flag: false,
+            is_account_valid: false,
+            qualifying_transactions_count: 0,
+            total_points: 0,
+            is_guest: true,
+          })
+          .select("*, backed_team:teams!synced_users_backed_team_id_fkey(*)")
+          .maybeSingle();
+
+        if (insertErr || !inserted) {
+          const { data: retry } = await supabase
+            .from("synced_users")
+            .select("*, backed_team:teams!synced_users_backed_team_id_fkey(*)")
+            .eq("email", email)
+            .maybeSingle();
+          guestUser = retry;
+        } else {
+          guestUser = inserted;
+        }
+      }
+
+      if (!guestUser) {
+        return new Response(JSON.stringify({ error: "Could not create guest account. Please try again." }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const guestPulseId = guestUser.core_user_id || email;
+      pulseIdentify(guestPulseId, {
         email,
         first_encounter: "predictor_app",
       }).catch(() => {});
-      pulseTrack(guestId, "registered", {
+      pulseTrack(guestPulseId, "registered", {
         method: "otp",
         is_guest: true,
         first_encounter: "predictor_app",
       }).catch(() => {});
 
-      const guestUser = {
-        id: guestId,
-        email,
-        name: email.split("@")[0],
-        username: null,
-        account_number: null,
-        active_customer_flag: false,
-        qualifying_transactions_count: 0,
-        is_account_valid: false,
-        is_staff: false,
-        total_points: 0,
-        backed_team_id: null,
-        backed_team: null,
-        is_guest: true,
-      };
-
-      return new Response(JSON.stringify({ success: true, user: guestUser }), {
+      return new Response(JSON.stringify({ success: true, user: { ...guestUser, is_guest: true } }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

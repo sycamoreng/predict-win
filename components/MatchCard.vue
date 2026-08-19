@@ -4,6 +4,7 @@ interface Team {
   name: string
   code: string
   flag_emoji: string
+  logo_url?: string
 }
 
 interface Match {
@@ -41,9 +42,13 @@ const KNOCKOUT_STAGES = new Set(['round_of_16', 'round_of_32', 'quarter_final', 
 const props = defineProps<{
   match: Match
   prediction?: Prediction | null
+  campaign?: { has_knockout_stages?: boolean; scoring_result?: number; scoring_first_to_score?: number; scoring_exact_ft?: number; scoring_exact_aet?: number; scoring_exact_pen?: number; name?: string }
+  tripleCaptainMatchId?: string | null
+  tripleCaptainAvailable?: boolean
+  matchweekLocked?: boolean
 }>()
 
-const emit = defineEmits<{ saved: [Prediction] }>()
+const emit = defineEmits<{ saved: [Prediction]; 'activate-triple-captain': [string]; 'cancel-triple-captain': [] }>()
 
 const { user, trackPulseEvent } = useAuth()
 const { call } = useFunctions()
@@ -66,7 +71,7 @@ const hasTouchedFirstScorer = ref(!!props.prediction?.wants_first_to_score_pick)
 const hasTouchedScore = ref(!!props.prediction?.wants_exact_score_pick)
 
 // Knockout mode
-const isKnockout = computed(() => KNOCKOUT_STAGES.has(props.match.stage))
+const isKnockout = computed(() => (props.campaign?.has_knockout_stages !== false) && KNOCKOUT_STAGES.has(props.match.stage))
 const finishType = ref<FinishType | null>((props.prediction?.predicted_finish_type as FinishType) ?? null)
 
 const saving = ref(false)
@@ -74,6 +79,14 @@ const error = ref('')
 const justSaved = ref(false)
 const showShare = ref(false)
 const toastMessage = ref('')
+
+const isTripleCaptainOnThis = computed(() => props.tripleCaptainMatchId === props.match.id)
+const canActivateTC = computed(() => {
+  if (!props.tripleCaptainAvailable) return false
+  if (props.match.status !== 'scheduled') return false
+  if (new Date(props.match.kickoff_at) <= new Date()) return false
+  return true
+})
 
 const shareText = computed(() => {
   const home = props.match.home_team.name
@@ -97,8 +110,9 @@ const shareText = computed(() => {
   }
 
   parts.push('')
-  parts.push('Think you know better? Make your predictions on Sycamore Predictor League!')
-  parts.push('#SycamorePredictor #WorldCup2026')
+  const campaignName = props.campaign?.name || 'Sycamore Predictor League'
+  parts.push(`Think you know better? Make your predictions on ${campaignName}!`)
+  parts.push('#SycamorePredictor')
 
   return parts.join('\n')
 })
@@ -133,7 +147,7 @@ onUnmounted(() => {
   if (timer) clearInterval(timer)
 })
 
-const isLocked = computed(() => now.value >= lockTime.value || props.match.status !== 'scheduled')
+const isLocked = computed(() => props.matchweekLocked || now.value >= lockTime.value || props.match.status !== 'scheduled')
 const isCompleted = computed(() => props.match.status === 'completed')
 
 const timeToLock = computed(() => {
@@ -272,10 +286,13 @@ const knockoutScoreValid = computed(() => {
 })
 
 const knockoutScoreLabel = computed(() => {
-  if (!finishType.value) return '+15 pts'
-  if (finishType.value === 'FT') return '+15 pts'
-  if (finishType.value === 'AET') return '+20 pts'
-  return '+25 pts'
+  const ftPts = props.campaign?.scoring_exact_ft ?? 15
+  const aetPts = props.campaign?.scoring_exact_aet ?? 20
+  const penPts = props.campaign?.scoring_exact_pen ?? 25
+  if (!finishType.value) return `+${ftPts} pts`
+  if (finishType.value === 'FT') return `+${ftPts} pts`
+  if (finishType.value === 'AET') return `+${aetPts} pts`
+  return `+${penPts} pts`
 })
 
 const anyEnabled = computed(() => wantsWinner.value || wantsFirstToScore.value || wantsExactScore.value)
@@ -335,8 +352,10 @@ const save = async () => {
     if (diff > 0) {
       const hours = Math.floor(diff / 3_600_000)
       const minutes = Math.floor((diff % 3_600_000) / 60_000)
-      const timeStr = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`
-      toastMessage.value = `Prediction locked in! You have ${timeStr} to make changes before it's final.`
+      const timeStr = hours >= 24
+        ? `${Math.floor(hours / 24)}d ${hours % 24}h`
+        : hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`
+      toastMessage.value = `Prediction saved! You can still change it for the next ${timeStr}, until it locks.`
     } else {
       toastMessage.value = 'Prediction saved!'
     }
@@ -378,9 +397,36 @@ const save = async () => {
 
     <p class="text-xs text-ink-500 mb-4">{{ kickoffLabel }}</p>
 
+    <!-- Triple Captain badge or activation -->
+    <div v-if="isTripleCaptainOnThis" class="mb-4 flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+      <svg class="w-4 h-4 text-amber-500 shrink-0" fill="currentColor" viewBox="0 0 24 24">
+        <path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/>
+      </svg>
+      <span class="text-xs font-bold text-amber-700 flex-1">Triple Captain active - 3x points!</span>
+      <button
+        v-if="!isLocked && !isCompleted"
+        @click="emit('cancel-triple-captain')"
+        class="px-2 py-1 rounded-lg bg-white hover:bg-coral-50 border border-coral-200 text-coral-600 text-[11px] font-semibold transition"
+      >
+        Cancel
+      </button>
+    </div>
+    <div v-else-if="canActivateTC && !isLocked && !isCompleted" class="mb-4">
+      <button
+        @click="emit('activate-triple-captain', match.id)"
+        class="w-full flex items-center justify-center gap-2 rounded-xl border-2 border-dashed border-amber-300 hover:border-amber-400 bg-amber-50/50 hover:bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 transition"
+      >
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/>
+        </svg>
+        Use Triple Captain (3x points)
+      </button>
+    </div>
+
     <div class="grid grid-cols-3 items-center gap-3 mb-6">
       <div class="text-center">
-        <div class="text-4xl mb-1">{{ match.home_team.flag_emoji }}</div>
+        <img v-if="match.home_team.logo_url" :src="match.home_team.logo_url" :alt="match.home_team.name" class="w-10 h-10 mx-auto mb-1 object-contain" />
+        <div v-else class="text-4xl mb-1">{{ match.home_team.flag_emoji }}</div>
         <div class="font-bold text-ink-900 text-sm">{{ match.home_team.name }}</div>
       </div>
       <div class="text-center">
@@ -390,7 +436,8 @@ const save = async () => {
         <div v-else class="text-xl font-bold text-ink-300">vs</div>
       </div>
       <div class="text-center">
-        <div class="text-4xl mb-1">{{ match.away_team.flag_emoji }}</div>
+        <img v-if="match.away_team.logo_url" :src="match.away_team.logo_url" :alt="match.away_team.name" class="w-10 h-10 mx-auto mb-1 object-contain" />
+        <div v-else class="text-4xl mb-1">{{ match.away_team.flag_emoji }}</div>
         <div class="font-bold text-ink-900 text-sm">{{ match.away_team.name }}</div>
       </div>
     </div>
@@ -407,7 +454,7 @@ const save = async () => {
             />
             <span class="font-bold text-ink-900 text-sm">Winner</span>
           </span>
-          <span class="text-xs font-semibold text-sky-600">+5 pts</span>
+          <span class="text-xs font-semibold text-sky-600">+{{ campaign?.scoring_result ?? 5 }} pts</span>
         </label>
         <!-- Group stage: 3-col with Draw -->
         <div v-if="!isKnockout" :class="['grid grid-cols-3 gap-2 transition-opacity', wantsWinner ? '' : 'opacity-40 pointer-events-none']">
@@ -460,7 +507,7 @@ const save = async () => {
               winnerDisabled && 'opacity-60 cursor-not-allowed',
             ]"
           >
-            {{ match.home_team.flag_emoji }} {{ match.home_team.code }}
+            <img v-if="match.home_team.logo_url" :src="match.home_team.logo_url" :alt="match.home_team.code" class="w-4 h-4 object-contain inline-block" /> <span v-else>{{ match.home_team.flag_emoji }}</span> {{ match.home_team.code }}
           </button>
           <button
             type="button"
@@ -472,7 +519,7 @@ const save = async () => {
               winnerDisabled && 'opacity-60 cursor-not-allowed',
             ]"
           >
-            {{ match.away_team.flag_emoji }} {{ match.away_team.code }}
+            <img v-if="match.away_team.logo_url" :src="match.away_team.logo_url" :alt="match.away_team.code" class="w-4 h-4 object-contain inline-block" /> <span v-else>{{ match.away_team.flag_emoji }}</span> {{ match.away_team.code }}
           </button>
         </div>
         <p v-if="isKnockout && wantsWinner && !hasTouchedWinner" class="mt-2 text-xs text-ink-400">
@@ -491,7 +538,7 @@ const save = async () => {
             />
             <span class="font-bold text-ink-900 text-sm">First to score</span>
           </span>
-          <span class="text-xs font-semibold text-mint-600">+10 pts</span>
+          <span class="text-xs font-semibold text-mint-600">+{{ campaign?.scoring_first_to_score ?? 10 }} pts</span>
         </label>
         <div :class="['grid grid-cols-2 gap-2 transition-opacity', wantsFirstToScore ? '' : 'opacity-40 pointer-events-none']">
           <button
@@ -504,7 +551,7 @@ const save = async () => {
               firstScorerDisabled && 'opacity-60 cursor-not-allowed',
             ]"
           >
-            {{ match.home_team.flag_emoji }} {{ match.home_team.code }}
+            <img v-if="match.home_team.logo_url" :src="match.home_team.logo_url" :alt="match.home_team.code" class="w-4 h-4 object-contain inline-block" /> <span v-else>{{ match.home_team.flag_emoji }}</span> {{ match.home_team.code }}
           </button>
           <button
             type="button"
@@ -516,7 +563,7 @@ const save = async () => {
               firstScorerDisabled && 'opacity-60 cursor-not-allowed',
             ]"
           >
-            {{ match.away_team.flag_emoji }} {{ match.away_team.code }}
+            <img v-if="match.away_team.logo_url" :src="match.away_team.logo_url" :alt="match.away_team.code" class="w-4 h-4 object-contain inline-block" /> <span v-else>{{ match.away_team.flag_emoji }}</span> {{ match.away_team.code }}
           </button>
         </div>
         <p v-if="wantsFirstToScore && wantsExactScore && homeScore === 0 && awayScore === 0 && hasTouchedScore" class="mt-2 text-xs text-ink-500">
@@ -538,7 +585,7 @@ const save = async () => {
             />
             <span class="font-bold text-ink-900 text-sm">Exact scoreline</span>
           </span>
-          <span class="text-xs font-semibold text-coral-600">{{ isKnockout ? knockoutScoreLabel : '+15 pts' }}</span>
+          <span class="text-xs font-semibold text-coral-600">{{ isKnockout ? knockoutScoreLabel : `+${campaign?.scoring_exact_ft ?? 15} pts` }}</span>
         </label>
 
         <div :class="['transition-opacity', wantsExactScore ? '' : 'opacity-40 pointer-events-none']">
@@ -705,7 +752,7 @@ const save = async () => {
       v-if="showShare"
       :text="shareText"
       :image-card-props="predictionImageProps"
-      title="My World Cup Prediction"
+      :title="`My ${campaign?.name || 'Predictor League'} Prediction`"
       @close="showShare = false"
     />
 

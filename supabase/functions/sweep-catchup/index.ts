@@ -7,6 +7,8 @@ import { pulseTrack } from "../_shared/pulse.ts";
  *
  * Designed to run on a cron (every 30 min) as a safety net, and also callable
  * manually for backfill.
+ *
+ * Campaign-aware: only processes matches and participants for the active campaign.
  */
 
 const corsHeaders = {
@@ -22,16 +24,30 @@ const supabase = createClient(
 
 const SWEEP_TRIGGER_URL = `${Deno.env.get("SUPABASE_URL")}/functions/v1/sweep-trigger`;
 
+async function getActiveCampaign() {
+  const { data } = await supabase.from("campaigns").select("*").eq("is_active", true).maybeSingle();
+  return data;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
   try {
-    // Find all completed matches with a decisive result (not a draw)
+    const campaign = await getActiveCampaign();
+
+    if (!campaign) {
+      return new Response(JSON.stringify({ success: true, checked: 0, triggered: 0 }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Find all completed matches with a decisive result (not a draw) for the active campaign
     const { data: matches } = await supabase
       .from("matches")
       .select("id, home_team_id, away_team_id, home_score, away_score, kickoff_at")
+      .eq("campaign_id", campaign.id)
       .eq("status", "completed")
       .not("home_score", "is", null)
       .not("away_score", "is", null);
@@ -52,10 +68,11 @@ Deno.serve(async (req: Request) => {
         ? match.home_team_id
         : match.away_team_id;
 
-      // Find opted-in users who backed this winning team
+      // Find opted-in campaign participants who backed this winning team
       const { data: optedInUsers } = await supabase
-        .from("synced_users")
-        .select("id")
+        .from("campaign_participants")
+        .select("user_id")
+        .eq("campaign_id", campaign.id)
         .eq("backed_team_id", winningTeamId)
         .eq("auto_savings_enabled", true);
 
@@ -66,10 +83,10 @@ Deno.serve(async (req: Request) => {
         .from("sweep_results")
         .select("user_id")
         .eq("match_id", match.id)
-        .in("user_id", optedInUsers.map((u) => u.id));
+        .in("user_id", optedInUsers.map((u) => u.user_id));
 
       const existingUserIds = new Set((existingResults || []).map((r) => r.user_id));
-      const missedUsers = optedInUsers.filter((u) => !existingUserIds.has(u.id));
+      const missedUsers = optedInUsers.filter((u) => !existingUserIds.has(u.user_id));
 
       if (missedUsers.length === 0) continue;
 

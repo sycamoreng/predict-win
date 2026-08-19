@@ -11,6 +11,15 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
+async function getActiveCampaign() {
+  const { data } = await supabase
+    .from("campaigns")
+    .select("*")
+    .eq("is_active", true)
+    .maybeSingle();
+  return data;
+}
+
 const SEND_EMAIL_URL = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-email`;
 const APP_BASE_URL = Deno.env.get("APP_BASE_URL") || "https://play.sycamore.ng";
 
@@ -47,9 +56,15 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const campaign = await getActiveCampaign();
+    if (!campaign) {
+      return new Response(JSON.stringify({ success: true, message: "No active campaign", sent: 0 }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const now = new Date();
     const lockWindowMs = 3 * 60 * 60 * 1000;
-    // Find matches kicking off in 3-6 hours (i.e. locking in 0-3 hours)
     const lockingSoon = new Date(now.getTime() + lockWindowMs);
     const lockingLater = new Date(now.getTime() + 6 * 60 * 60 * 1000);
 
@@ -57,6 +72,7 @@ Deno.serve(async (req: Request) => {
       .from("matches")
       .select("id, kickoff_at, home_team:teams!matches_home_team_id_fkey(name, code), away_team:teams!matches_away_team_id_fkey(name, code)")
       .eq("status", "scheduled")
+      .eq("campaign_id", campaign.id)
       .gte("kickoff_at", lockingSoon.toISOString())
       .lte("kickoff_at", lockingLater.toISOString())
       .order("kickoff_at", { ascending: true });
@@ -69,19 +85,22 @@ Deno.serve(async (req: Request) => {
 
     const matchIds = upcomingMatches.map((m) => m.id);
 
-    // Get all active users
-    const { data: allUsers } = await supabase
-      .from("synced_users")
-      .select("id, email, name, username")
-      .eq("active_customer_flag", true);
+    // Query campaign_participants joined with synced_users to get only enrolled users
+    const { data: participants } = await supabase
+      .from("campaign_participants")
+      .select("user_id, user:synced_users!campaign_participants_user_id_fkey(id, email, name, username)")
+      .eq("campaign_id", campaign.id);
 
-    if (!allUsers || allUsers.length === 0) {
-      return new Response(JSON.stringify({ success: true, message: "No active users", sent: 0 }), {
+    if (!participants || participants.length === 0) {
+      return new Response(JSON.stringify({ success: true, message: "No enrolled users for active campaign", sent: 0 }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Get existing predictions for these matches
+    const enrolledUsers = participants
+      .map((p) => p.user as unknown as { id: string; email: string; name: string | null; username: string | null })
+      .filter((u) => u && u.email);
+
     const { data: existingPreds } = await supabase
       .from("predictions")
       .select("user_id, match_id")
@@ -91,7 +110,6 @@ Deno.serve(async (req: Request) => {
       (existingPreds || []).map((p) => `${p.user_id}:${p.match_id}`),
     );
 
-    // Build match info for template
     const matchList = upcomingMatches.map((m) => {
       const kickoff = new Date(m.kickoff_at);
       const lockTime = new Date(kickoff.getTime() - lockWindowMs);
@@ -106,10 +124,9 @@ Deno.serve(async (req: Request) => {
     let sent = 0;
     const BATCH_LIMIT = 500;
 
-    for (const user of allUsers) {
+    for (const user of enrolledUsers) {
       if (sent >= BATCH_LIMIT) break;
 
-      // Check if user has unpredicted matches in this batch
       const unpredicted = matchIds.filter(
         (mid) => !predictedSet.has(`${user.id}:${mid}`),
       );
@@ -133,6 +150,7 @@ Deno.serve(async (req: Request) => {
 
     return new Response(JSON.stringify({
       success: true,
+      campaign_id: campaign.id,
       matches_in_window: upcomingMatches.length,
       users_notified: sent,
     }), {

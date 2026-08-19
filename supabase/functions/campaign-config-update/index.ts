@@ -18,7 +18,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const { admin_email, fields } = body;
+    const { admin_email, fields, campaign_id } = body;
 
     if (!admin_email || !fields || typeof fields !== "object") {
       return new Response(JSON.stringify({ error: "admin_email and fields required" }), {
@@ -27,7 +27,6 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Verify admin has permission
     const { data: adminUser } = await supabase
       .from("admin_users")
       .select("role")
@@ -41,8 +40,22 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Only allow known fields
-    const allowedFields = ["predictions_enabled", "leaderboard_enabled", "team_picking_enabled", "campaign_name", "week_start_date", "prediction_lock_minutes"];
+    const allowedFields = [
+      "predictions_enabled", "leaderboard_enabled", "team_picking_enabled",
+      "public_access_enabled",
+      "require_eligibility_leaderboard", "require_eligibility_chips",
+      "registration_open", "campaign_ended", "name",
+      "week_start_date", "prediction_lock_minutes",
+      "scoring_result", "scoring_first_to_score",
+      "scoring_exact_ft", "scoring_exact_aet", "scoring_exact_pen",
+      "max_double_down_uses", "max_triple_captain_uses",
+      "max_first_blood_uses", "max_streak_shield_uses",
+      "max_last_stand_uses", "max_perfect_week_uses",
+      "total_matchweeks",
+      "upset_multiplier_enabled", "upset_multiplier_favourite",
+      "upset_multiplier_draw", "upset_multiplier_underdog",
+      "h2h_weekly_limit",
+    ];
     const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() };
 
     for (const [key, value] of Object.entries(fields)) {
@@ -58,10 +71,14 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const { error: dbError } = await supabase
-      .from("campaign_config")
-      .update(updatePayload)
-      .eq("id", 1);
+    // Update the specific campaign, or the active one if no campaign_id provided
+    let query = supabase.from("campaigns").update(updatePayload);
+    if (campaign_id) {
+      query = query.eq("id", campaign_id);
+    } else {
+      query = query.eq("is_active", true);
+    }
+    const { error: dbError } = await query;
 
     if (dbError) {
       return new Response(JSON.stringify({ error: dbError.message }), {
@@ -69,6 +86,11 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    // Also update legacy campaign_config if it exists
+    try {
+      await supabase.from("campaign_config").update(updatePayload).eq("id", 1);
+    } catch {}
 
     return new Response(JSON.stringify({ success: true, updated: updatePayload }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

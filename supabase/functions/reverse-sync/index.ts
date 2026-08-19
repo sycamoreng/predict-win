@@ -11,6 +11,9 @@ import { createClient } from "npm:@supabase/supabase-js@2.45.4";
  *   - On team change (back-team)
  *   - On auto-savings toggle
  *   - Periodically as a batch sync
+ *
+ * Campaign-aware: reads from campaign_participants for the active campaign
+ * rather than directly from synced_users.
  */
 
 const corsHeaders = {
@@ -26,6 +29,11 @@ const supabase = createClient(
 
 const CORE_API_BASE = Deno.env.get("SYCAMORE_CORE_API_URL") || "";
 const CORE_API_KEY = Deno.env.get("SYCAMORE_CORE_API_KEY") || "";
+
+async function getActiveCampaign() {
+  const { data } = await supabase.from("campaigns").select("*").eq("is_active", true).maybeSingle();
+  return data;
+}
 
 async function pushToCore(payload: Record<string, unknown>): Promise<{ ok: boolean; status: number; body: unknown }> {
   if (!CORE_API_BASE) {
@@ -55,6 +63,8 @@ Deno.serve(async (req: Request) => {
     const url = new URL(req.url);
     const route = url.pathname.split("/").pop();
 
+    const campaign = await getActiveCampaign();
+
     if (route === "single") {
       const accountNumber = (body.account_number || "").trim();
       if (!accountNumber) {
@@ -64,9 +74,10 @@ Deno.serve(async (req: Request) => {
         });
       }
 
+      // Look up the user by account_number
       const { data: user } = await supabase
         .from("synced_users")
-        .select("*, backed_team:teams!synced_users_backed_team_id_fkey(name, code)")
+        .select("id, account_number")
         .eq("account_number", accountNumber)
         .maybeSingle();
 
@@ -77,14 +88,26 @@ Deno.serve(async (req: Request) => {
         });
       }
 
+      // Get campaign-specific participation data
+      let participation: any = null;
+      if (campaign) {
+        const { data } = await supabase
+          .from("campaign_participants")
+          .select("backed_team_id, auto_savings_enabled, auto_savings_amount, auto_savings_duration, auto_savings_consented_at, backed_team:teams!campaign_participants_backed_team_id_fkey(name, code)")
+          .eq("campaign_id", campaign.id)
+          .eq("user_id", user.id)
+          .maybeSingle();
+        participation = data;
+      }
+
       const payload = {
         account_number: user.account_number,
-        backed_team: user.backed_team ? (user.backed_team as any).name : null,
-        backed_team_code: user.backed_team ? (user.backed_team as any).code : null,
-        auto_savings_enabled: user.auto_savings_enabled,
-        auto_savings_amount: user.auto_savings_amount,
-        auto_savings_duration: user.auto_savings_duration,
-        auto_savings_consented_at: user.auto_savings_consented_at,
+        backed_team: participation?.backed_team ? (participation.backed_team as any).name : null,
+        backed_team_code: participation?.backed_team ? (participation.backed_team as any).code : null,
+        auto_savings_enabled: participation?.auto_savings_enabled ?? false,
+        auto_savings_amount: participation?.auto_savings_amount ?? null,
+        auto_savings_duration: participation?.auto_savings_duration ?? null,
+        auto_savings_consented_at: participation?.auto_savings_consented_at ?? null,
       };
 
       const result = await pushToCore(payload);
@@ -94,26 +117,35 @@ Deno.serve(async (req: Request) => {
     }
 
     if (route === "batch") {
-      const { data: users } = await supabase
-        .from("synced_users")
-        .select("account_number, backed_team_id, auto_savings_enabled, auto_savings_amount, auto_savings_duration, auto_savings_consented_at, backed_team:teams!synced_users_backed_team_id_fkey(name, code)")
-        .or("backed_team_id.not.is.null,auto_savings_enabled.eq.true");
-
-      if (!users || users.length === 0) {
+      if (!campaign) {
         return new Response(JSON.stringify({ success: true, synced: 0 }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
-      const records = users.map((u) => ({
-        account_number: u.account_number,
-        backed_team: u.backed_team ? (u.backed_team as any).name : null,
-        backed_team_code: u.backed_team ? (u.backed_team as any).code : null,
-        auto_savings_enabled: u.auto_savings_enabled,
-        auto_savings_amount: u.auto_savings_amount,
-        auto_savings_duration: u.auto_savings_duration,
-        auto_savings_consented_at: u.auto_savings_consented_at,
-      }));
+      const { data: participants } = await supabase
+        .from("campaign_participants")
+        .select("user_id, backed_team_id, auto_savings_enabled, auto_savings_amount, auto_savings_duration, auto_savings_consented_at, backed_team:teams!campaign_participants_backed_team_id_fkey(name, code), user:synced_users!campaign_participants_user_id_fkey(account_number)")
+        .eq("campaign_id", campaign.id)
+        .or("backed_team_id.not.is.null,auto_savings_enabled.eq.true");
+
+      if (!participants || participants.length === 0) {
+        return new Response(JSON.stringify({ success: true, synced: 0 }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const records = participants
+        .filter((p) => p.user && (p.user as any).account_number)
+        .map((p) => ({
+          account_number: (p.user as any).account_number,
+          backed_team: p.backed_team ? (p.backed_team as any).name : null,
+          backed_team_code: p.backed_team ? (p.backed_team as any).code : null,
+          auto_savings_enabled: p.auto_savings_enabled,
+          auto_savings_amount: p.auto_savings_amount,
+          auto_savings_duration: p.auto_savings_duration,
+          auto_savings_consented_at: p.auto_savings_consented_at,
+        }));
 
       let coreResult: { ok: boolean; status: number; body: unknown } = { ok: false, status: 0, body: null };
       if (CORE_API_BASE) {

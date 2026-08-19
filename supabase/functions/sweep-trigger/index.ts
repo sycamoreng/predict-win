@@ -4,7 +4,7 @@ import { pulseTrack } from "../_shared/pulse.ts";
 /**
  * Sweep Trigger: predictor → core platform
  *
- * PRD §4.5: POST /games/fifa-predict/wins
+ * POST /api/v1/games/predict/wins
  * When a backed team wins, this function:
  *   1. Finds all users who backed that team AND have auto_savings_enabled
  *   2. Calls the core platform webhook with the winning team + opted-in account numbers
@@ -19,10 +19,17 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  SERVICE_ROLE_KEY,
 );
+
+async function getActiveCampaign() {
+  const { data } = await supabase.from("campaigns").select("*").eq("is_active", true).maybeSingle();
+  return data;
+}
 
 const CORE_API_BASE = (Deno.env.get("SYCAMORE_CORE_API_URL") || "https://api.sycamore.ng/api/v1").replace(/\/+$/, "");
 const CORE_API_KEY = Deno.env.get("SYCAMORE_CORE_API_KEY") || "";
@@ -77,9 +84,28 @@ Deno.serve(async (req: Request) => {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
+  // This function moves real money (creates/tops up savings via the core
+  // platform). Only trusted server callers holding the service-role key may
+  // invoke it — the public anon key is rejected.
+  const authToken = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  if (authToken !== SERVICE_ROLE_KEY) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   try {
     const body = await req.json().catch(() => ({}));
     const { winning_team_id, match_id } = body;
+
+    const campaign = await getActiveCampaign();
+    if (!campaign) {
+      return new Response(JSON.stringify({ error: "No active campaign" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     if (!winning_team_id) {
       return new Response(JSON.stringify({ error: "winning_team_id required" }), {
@@ -101,11 +127,25 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const { data: optedInUsers } = await supabase
-      .from("synced_users")
-      .select("id, email, name, username, account_number, auto_savings_amount, auto_savings_duration, backed_team_wins")
+    const { data: participants } = await supabase
+      .from("campaign_participants")
+      .select("user_id, backed_team_id, auto_savings_enabled, auto_savings_amount, auto_savings_duration, backed_team_wins, user:synced_users!campaign_participants_user_id_fkey(id, email, name, username, account_number)")
+      .eq("campaign_id", campaign.id)
       .eq("backed_team_id", winning_team_id)
       .eq("auto_savings_enabled", true);
+
+    const optedInUsers = (participants || [])
+      .filter((p: any) => p.user)
+      .map((p: any) => ({
+        id: p.user.id,
+        email: p.user.email,
+        name: p.user.name,
+        username: p.user.username,
+        account_number: p.user.account_number,
+        auto_savings_amount: p.auto_savings_amount,
+        auto_savings_duration: p.auto_savings_duration,
+        backed_team_wins: p.backed_team_wins,
+      }));
 
     if (!optedInUsers || optedInUsers.length === 0) {
       pulseTrack("system", "sweep_no_opted_in_users", {
@@ -140,7 +180,7 @@ Deno.serve(async (req: Request) => {
         duration: u.auto_savings_duration,
         backed_team_wins: u.backed_team_wins || 0,
         action: (u.backed_team_wins || 0) <= 1 ? "create" : "topup",
-        plan_name: `World Cup 2026 — ${team.name}`,
+        plan_name: `${campaign.name || "Campaign"} — ${team.name}`,
       })),
     };
 
@@ -200,8 +240,8 @@ Deno.serve(async (req: Request) => {
     };
 
     if (CORE_API_BASE) {
-      try {
-        const res = await fetch(`${CORE_API_BASE}/games/fifa-predict/wins`, {
+      const postWins = async (path: string) => {
+        const res = await fetch(`${CORE_API_BASE}${path}`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -210,7 +250,10 @@ Deno.serve(async (req: Request) => {
           body: JSON.stringify(sweepPayload),
         });
         const resBody = await res.json().catch(() => null);
-        coreResult = { ok: res.ok, status: res.status, body: resBody };
+        return { ok: res.ok, status: res.status, body: resBody };
+      };
+      try {
+        coreResult = await postWins("/games/predict/wins");
       } catch (err) {
         coreResult = { ok: false, status: 0, body: (err as Error).message };
       }
@@ -267,7 +310,7 @@ Deno.serve(async (req: Request) => {
           firstName: deriveFirstName(u.name, u.username, u.email),
           amount: u.auto_savings_amount,
           lastFourDigits: (u.account_number || "").slice(-4) || null,
-          fundLink: `${APP_BASE_URL}/settings`,
+          fundLink: `${APP_BASE_URL}/team`,
         });
       }
     } else {
@@ -320,12 +363,12 @@ Deno.serve(async (req: Request) => {
                 amount: localUser.auto_savings_amount,
                 teamName: team.name,
                 lastFourDigits,
-                savingsLink: `${APP_BASE_URL}/settings`,
+                savingsLink: `${APP_BASE_URL}/team`,
               } : {
                 firstName: deriveFirstName(localUser.name, localUser.username, localUser.email),
                 amount: localUser.auto_savings_amount,
                 lastFourDigits,
-                fundLink: `${APP_BASE_URL}/settings`,
+                fundLink: `${APP_BASE_URL}/team`,
               };
               await logEvent(localUser.id, eventName, {
                 email: localUser.email,

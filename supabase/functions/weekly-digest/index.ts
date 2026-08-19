@@ -11,6 +11,11 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
+async function getActiveCampaign() {
+  const { data } = await supabase.from("campaigns").select("*").eq("is_active", true).maybeSingle();
+  return data;
+}
+
 const SEND_EMAIL_URL = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-email`;
 const APP_BASE_URL = Deno.env.get("APP_BASE_URL") || "https://play.sycamore.ng";
 
@@ -43,7 +48,6 @@ async function sendEmail(eventName: string, toEmail: string, toName: string, dat
 
 function weekBounds(): { start: Date; end: Date; prevStart: Date; prevEnd: Date } {
   const now = new Date();
-  // Current week: Sunday 00:00 UTC to Saturday 23:59
   const dayOfWeek = now.getUTCDay();
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - dayOfWeek));
   const end = new Date(start.getTime() + 7 * 86_400_000);
@@ -52,11 +56,12 @@ function weekBounds(): { start: Date; end: Date; prevStart: Date; prevEnd: Date 
   return { start, end, prevStart, prevEnd };
 }
 
-async function computeWeeklyPoints(weekStart: string, weekEnd: string): Promise<Map<string, number>> {
+async function computeWeeklyPoints(weekStart: string, weekEnd: string, campaignId: string): Promise<Map<string, number>> {
   const { data: matches } = await supabase
     .from("matches")
     .select("id")
     .eq("status", "completed")
+    .eq("campaign_id", campaignId)
     .gte("kickoff_at", weekStart)
     .lt("kickoff_at", weekEnd);
 
@@ -81,32 +86,44 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const campaign = await getActiveCampaign();
+    if (!campaign) {
+      return new Response(JSON.stringify({ success: true, message: "No active campaign", sent: 0 }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const { start, end, prevStart, prevEnd } = weekBounds();
 
-    // Get all users with predictions, ordered by total points
-    const { data: allUsers } = await supabase
-      .from("synced_users")
-      .select("id, email, name, username, total_points")
+    const { data: participants } = await supabase
+      .from("campaign_participants")
+      .select("user_id, total_points, user:synced_users!campaign_participants_user_id_fkey(id, email, name, username)")
+      .eq("campaign_id", campaign.id)
       .gt("total_points", 0)
       .order("total_points", { ascending: false });
 
-    if (!allUsers || allUsers.length === 0) {
+    if (!participants || participants.length === 0) {
       return new Response(JSON.stringify({ success: true, message: "No users with points", sent: 0 }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Compute this week's points and last week's points for movement
-    const thisWeekPoints = await computeWeeklyPoints(start.toISOString(), end.toISOString());
-    const lastWeekPoints = await computeWeeklyPoints(prevStart.toISOString(), prevEnd.toISOString());
+    const allUsers = participants.map((p) => ({
+      id: p.user_id,
+      email: (p.user as any).email as string,
+      name: (p.user as any).name as string | null,
+      username: (p.user as any).username as string | null,
+      total_points: p.total_points,
+    }));
 
-    // Build ranked list (current overall ranking)
+    const thisWeekPoints = await computeWeeklyPoints(start.toISOString(), end.toISOString(), campaign.id);
+    const lastWeekPoints = await computeWeeklyPoints(prevStart.toISOString(), prevEnd.toISOString(), campaign.id);
+
     const ranked = allUsers.map((u, i) => ({
       ...u,
       rank: i + 1,
     }));
 
-    // Compute previous week's ranking by subtracting this week's gains
     const prevRanked = [...allUsers]
       .map((u) => ({
         id: u.id,
@@ -125,10 +142,10 @@ Deno.serve(async (req: Request) => {
       if (sent >= BATCH_LIMIT) break;
 
       const weekPts = thisWeekPoints.get(user.id) || 0;
-      if (weekPts === 0 && user.rank > 100) continue; // Only email top 100 or those who scored this week
+      if (weekPts === 0 && user.rank > 100) continue;
 
       const prevRank = prevRankMap.get(user.id) || totalPlayers;
-      const movement = prevRank - user.rank; // positive = moved up
+      const movement = prevRank - user.rank;
 
       await sendEmail("weekly_leaderboard", user.email, user.name || "", {
         firstName: deriveFirstName(user.name, user.username, user.email),
@@ -147,6 +164,7 @@ Deno.serve(async (req: Request) => {
 
     return new Response(JSON.stringify({
       success: true,
+      campaign_id: campaign.id,
       total_players: totalPlayers,
       users_emailed: sent,
       week_start: start.toISOString(),

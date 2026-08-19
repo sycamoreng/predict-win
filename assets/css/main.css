@@ -6,6 +6,14 @@
   color-scheme: light;
 }
 
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 html,
 body {
   font-family: 'Plus Jakarta Sans', system-ui, sans-serif;

@@ -2,12 +2,19 @@
 definePageMeta({ middleware: 'auth' })
 
 const supabase = useSupabase()
-const { user, isGuest, hasAccount, needsUsername, refreshUser, trackPulseEvent } = useAuth()
-const { config: campaign, load: loadCampaign } = useCampaign()
+const { user, isGuest, hasAccount, needsUsername, refreshUser, trackPulseEvent, campaignBackedTeam, campaignBackedTeamId, campaignBackedTeamWins, campaignBackedTeamLockedAt, participation, isEnrolled, joinCampaign, campaignPoints } = useAuth()
+const { config: campaign, load: loadCampaign, campaignId, isLeague, isTournament } = useCampaign()
 const { call } = useFunctions()
 
 const teams = ref<any[]>([])
 const saving = ref<string | null>(null)
+const joining = ref(false)
+const handleJoin = async () => {
+  if (!campaignId.value) return
+  joining.value = true
+  await joinCampaign(campaignId.value)
+  joining.value = false
+}
 const loading = ref(true)
 const pickError = ref('')
 const confirmTeam = ref<any | null>(null)
@@ -23,12 +30,50 @@ const savingsTermsAccepted = ref(false)
 const savingsLoading = ref(false)
 const savingsError = ref('')
 
+const amountOptions = [1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000]
+const durationOptions = computed(() =>
+  savingsAmount.value >= 100000
+    ? [
+        { value: 90, label: '3 months' },
+        { value: 180, label: '6 months' },
+        { value: 270, label: '9 months' },
+      ]
+    : [{ value: 30, label: '30 days' }]
+)
+watch(savingsAmount, (amt) => {
+  if (amt >= 100000) {
+    if (![90, 180, 270].includes(savingsDuration.value)) savingsDuration.value = 90
+  } else {
+    savingsDuration.value = 30
+  }
+})
+const formatDuration = (days: number | null | undefined) => {
+  if (!days) return '—'
+  if (days >= 90 && days % 30 === 0) {
+    const months = days / 30
+    return `${months} month${months === 1 ? '' : 's'}`
+  }
+  return `${days} days`
+}
+
+const savingsEnabled = computed(() => !!(participation.value as any)?.auto_savings_enabled)
+const savingsCurrentAmount = computed(() => (participation.value as any)?.auto_savings_amount || 0)
+const savingsCurrentDuration = computed(() => (participation.value as any)?.auto_savings_duration || 0)
+
 const load = async () => {
   loading.value = true
   await refreshUser()
   await loadCampaign()
-  const { data } = await supabase.from('teams').select('*').order('name')
-  teams.value = data || []
+  if (campaignId.value) {
+    const { data } = await supabase
+      .from('campaign_teams')
+      .select('*, team:teams!campaign_teams_team_id_fkey(*)')
+      .eq('campaign_id', campaignId.value)
+      .order('group_name')
+    teams.value = (data || []).map((ct: any) => ({ ...ct.team, group_name: ct.group_name, is_eliminated: ct.is_eliminated }))
+  } else {
+    teams.value = []
+  }
   loading.value = false
 }
 
@@ -46,10 +91,10 @@ const onUsernameDone = () => {
   showUsernamePrompt.value = false
 }
 
-const hasTeam = computed(() => !!user.value?.backed_team_id)
+const hasTeam = computed(() => !!campaignBackedTeamId.value)
 const teamIsEliminated = computed(() => {
-  if (!user.value?.backed_team_id) return false
-  const t = teams.value.find((t) => t.id === user.value!.backed_team_id)
+  if (!campaignBackedTeamId.value) return false
+  const t = teams.value.find((t) => t.id === campaignBackedTeamId.value)
   return t?.is_eliminated === true
 })
 
@@ -62,10 +107,11 @@ const startPick = (team: any) => {
     return
   }
 
-  if (hasTeam.value && user.value.backed_team_id === team.id) return
+  if (hasTeam.value && campaignBackedTeamId.value === team.id) return
 
   if (hasTeam.value && !teamIsEliminated.value) {
-    pickError.value = `You're locked in with ${user.value.backed_team?.name}. You can only switch if your team is eliminated.`
+    const reason = isTournament.value ? 'You can only switch if your team is eliminated.' : 'Your choice is locked for the season.'
+    pickError.value = `You're locked in with ${campaignBackedTeam.value?.name || 'your team'}. ${reason}`
     return
   }
 
@@ -138,8 +184,8 @@ const groups = computed(() => {
   return Object.entries(map).sort(([a], [b]) => a.localeCompare(b))
 })
 
-const backedTeamName = computed(() => user.value?.backed_team?.name || 'your team')
-const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
+const backedTeamName = computed(() => campaignBackedTeam.value?.name || 'your team')
+const backedTeamWins = computed(() => campaignBackedTeamWins.value)
 </script>
 
 <template>
@@ -156,7 +202,7 @@ const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
         To back a team and enable auto-savings, you need a Sycamore account with an account number. Your predictions are still safe -- once your account is set up, everything syncs automatically.
       </p>
       <a
-        href="https://appsflyer.sycamore.ng/Qthc/worldcup_website"
+        href="https://appsflyer.sycamore.ng/Qthc/EPL"
         target="_blank"
         rel="noreferrer"
         class="btn-primary px-8 py-3 text-sm inline-block"
@@ -165,11 +211,34 @@ const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
       </a>
     </div>
 
-    <template v-else>
+    <!-- Not enrolled -->
+    <template v-else-if="!isEnrolled && !loading">
+      <div class="card p-8 sm:p-12 text-center max-w-lg mx-auto animate-fade-up">
+        <div class="w-16 h-16 mx-auto rounded-2xl bg-sky-100 grid place-items-center mb-5">
+          <svg class="w-8 h-8 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/>
+          </svg>
+        </div>
+        <h2 class="text-2xl font-extrabold text-ink-900 mb-2">Join {{ campaign.name }}</h2>
+        <p class="text-sm text-ink-600 mb-6 max-w-sm mx-auto leading-relaxed">
+          You need to join this campaign before you can pick a team. Once you join, you'll be able to back a team and compete for prizes.
+        </p>
+        <button
+          @click="handleJoin"
+          :disabled="joining"
+          class="btn-primary px-8 py-3 text-sm inline-flex items-center gap-2"
+        >
+          <span v-if="joining" class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+          {{ joining ? 'Joining...' : 'Join campaign' }}
+        </button>
+      </div>
+    </template>
+
+    <template v-else-if="isEnrolled">
     <div>
       <h1 class="text-3xl font-extrabold text-ink-900">My Team</h1>
       <p class="mt-1 text-ink-500">
-        {{ hasTeam ? 'You\'re riding with your team for the tournament.' : 'Choose wisely -- this is a one-time decision for the tournament.' }}
+        {{ hasTeam ? (isTournament ? 'You\'re riding with your team for the tournament.' : 'You\'re riding with your club for the season.') : (isTournament ? 'Choose wisely -- this is a one-time decision for the tournament.' : 'Choose wisely -- this is a one-time decision for the season.') }}
       </p>
     </div>
 
@@ -177,7 +246,8 @@ const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
     <div v-if="user && hasTeam" class="card p-6 sm:p-8 bg-gradient-to-br from-sky-50 via-white to-mint-50 border-0">
       <div class="flex flex-wrap items-center gap-6">
         <div class="w-20 h-20 rounded-2xl bg-white shadow-soft grid place-items-center text-5xl relative">
-          {{ user.backed_team?.flag_emoji || '&#9917;' }}
+          <img v-if="campaignBackedTeam?.logo_url" :src="campaignBackedTeam.logo_url" :alt="campaignBackedTeam.name" class="w-12 h-12 object-contain" />
+          <span v-else>{{ campaignBackedTeam?.flag_emoji || '&#9917;' }}</span>
           <span class="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-sky-500 text-white text-xs font-bold grid place-items-center shadow">
             &#10003;
           </span>
@@ -185,20 +255,20 @@ const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
         <div class="flex-1 min-w-[200px]">
           <div class="text-xs uppercase tracking-wider font-semibold text-ink-400">Backing since the start</div>
           <div class="text-2xl font-extrabold text-ink-900">
-            {{ user.backed_team?.name }}
+            {{ campaignBackedTeam?.name }}
           </div>
           <div class="flex items-center gap-3 mt-2">
             <span class="inline-flex items-center gap-1.5 pill bg-sky-50 text-sky-700 text-sm font-semibold">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
               {{ backedTeamWins }} {{ backedTeamWins === 1 ? 'win' : 'wins' }}
             </span>
-            <span v-if="teamIsEliminated" class="pill bg-coral-50 text-coral-700 text-sm font-semibold">Eliminated</span>
-            <span v-else class="pill bg-mint-50 text-mint-700 text-sm font-semibold">In Tournament</span>
+            <span v-if="teamIsEliminated && isTournament" class="pill bg-coral-50 text-coral-700 text-sm font-semibold">Eliminated</span>
+            <span v-else class="pill bg-mint-50 text-mint-700 text-sm font-semibold">{{ isTournament ? 'In Tournament' : 'Active' }}</span>
           </div>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div class="text-center px-4">
-            <div class="text-2xl font-extrabold text-sky-600">{{ user.total_points }}</div>
+            <div class="text-2xl font-extrabold text-sky-600">{{ campaignPoints }}</div>
             <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider">Points</div>
           </div>
           <div class="text-center px-4">
@@ -213,7 +283,7 @@ const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
       <!-- Lock notice -->
       <div v-if="!teamIsEliminated" class="mt-4 flex items-start gap-2 text-xs text-ink-500 bg-ink-50 rounded-xl p-3">
         <svg class="w-4 h-4 shrink-0 mt-0.5 text-ink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
-        <span>Your team choice is locked for the tournament. If {{ backedTeamName }} gets eliminated, you'll be able to pick a new team.</span>
+        <span>Your team choice is locked for the season.</span>
       </div>
       <div v-else class="mt-4 flex items-start gap-2 text-xs text-coral-700 bg-coral-50 rounded-xl p-3">
         <svg class="w-4 h-4 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -227,8 +297,8 @@ const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
         <div class="text-5xl">&#9917;</div>
         <h2 class="text-xl font-extrabold text-ink-900">Pick your team</h2>
         <p class="text-sm text-ink-600 max-w-sm mx-auto">
-          Choose the team you'll back for the entire World Cup. This is a <strong>one-time decision</strong> --
-          you can't change it unless your team gets eliminated.
+          Choose the team you'll back for {{ campaign.name }}. This is a <strong>one-time decision</strong> --
+          you can't change it for the rest of the season.
         </p>
       </div>
     </div>
@@ -242,24 +312,24 @@ const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
             Automatically save when {{ backedTeamName }} wins. Funds move from your Sycamore account into a locked savings plan.
           </p>
         </div>
-        <div v-if="(user as any).auto_savings_enabled" class="pill bg-mint-50 text-mint-700 shrink-0">
+        <div v-if="savingsEnabled" class="pill bg-mint-50 text-mint-700 shrink-0">
           Active
         </div>
       </div>
 
-      <div v-if="(user as any).auto_savings_enabled" class="mt-4 p-4 rounded-xl bg-mint-50/50 border border-mint-200">
+      <div v-if="savingsEnabled" class="mt-4 p-4 rounded-xl bg-mint-50/50 border border-mint-200">
         <div class="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
           <div>
             <div class="text-ink-500 text-xs font-semibold uppercase">Amount</div>
-            <div class="font-bold text-ink-900">₦{{ ((user as any).auto_savings_amount || 0).toLocaleString() }}</div>
+            <div class="font-bold text-ink-900">₦{{ savingsCurrentAmount.toLocaleString() }}</div>
           </div>
           <div>
             <div class="text-ink-500 text-xs font-semibold uppercase">Lock Period</div>
-            <div class="font-bold text-ink-900">{{ (user as any).auto_savings_duration }} days</div>
+            <div class="font-bold text-ink-900">{{ formatDuration(savingsCurrentDuration) }}</div>
           </div>
           <div>
             <div class="text-ink-500 text-xs font-semibold uppercase">Plan Name</div>
-            <div class="font-bold text-ink-900 text-xs">World Cup 2026 -- {{ backedTeamName }}</div>
+            <div class="font-bold text-ink-900 text-xs">{{ campaign.name }} — {{ backedTeamName }}</div>
           </div>
         </div>
         <button
@@ -329,7 +399,8 @@ const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
               user?.backed_team_id === t.id ? 'ring-2 ring-sky-500 ring-offset-2' : '',
             ]"
           >
-            <div class="text-3xl mb-1">{{ t.flag_emoji }}</div>
+            <img v-if="t.logo_url" :src="t.logo_url" :alt="t.name" class="w-8 h-8 object-contain mb-1" />
+            <div v-else class="text-3xl mb-1">{{ t.flag_emoji }}</div>
             <div class="font-bold text-ink-900 text-sm">{{ t.name }}</div>
             <div class="text-xs text-ink-400 font-semibold uppercase tracking-wider">{{ t.code }}</div>
             <div v-if="t.is_eliminated" class="absolute top-2 right-2 text-[10px] font-bold uppercase text-coral-500">Out</div>
@@ -348,13 +419,14 @@ const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
     <Teleport to="body">
       <div v-if="confirmTeam" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
         <div class="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 sm:p-8 space-y-5 text-center">
-          <div class="text-6xl">{{ confirmTeam.flag_emoji }}</div>
+          <img v-if="confirmTeam.logo_url" :src="confirmTeam.logo_url" :alt="confirmTeam.name" class="w-16 h-16 mx-auto object-contain" />
+          <div v-else class="text-6xl">{{ confirmTeam.flag_emoji }}</div>
           <h3 class="text-xl font-extrabold text-ink-900">
             Back {{ confirmTeam.name }}?
           </h3>
           <p class="text-sm text-ink-600 leading-relaxed">
-            This is a <strong>permanent choice</strong> for the tournament. You won't be able to switch
-            unless {{ confirmTeam.name }} gets eliminated. Are you sure?
+            This is a <strong>permanent choice</strong> for {{ campaign.name }}. You won't be able to switch
+            for the rest of the season. Are you sure?
           </p>
           <div class="flex gap-3">
             <button
@@ -385,12 +457,12 @@ const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
           </div>
           <div class="flex-1 overflow-y-auto p-6 sm:p-8 space-y-4 text-sm text-ink-700 leading-relaxed">
             <p class="font-bold text-ink-900">Sycamore Savings Product Policies</p>
-            <p>The World Cup 2026 Auto-Savings feature is a real savings product provided by <a href="https://sycamore.ng" target="_blank" class="text-sky-700 font-bold">Sycamore</a>. By enabling this feature, the following terms apply:</p>
+            <p>The {{ campaign.name }} Auto-Savings feature is a real savings product provided by <a href="https://sycamore.ng" target="_blank" class="text-sky-700 font-bold">Sycamore</a>. By enabling this feature, the following terms apply:</p>
 
             <div class="space-y-3">
               <div class="p-3 rounded-xl bg-ink-50">
                 <p class="font-bold text-ink-900 text-xs uppercase tracking-wider mb-1">Lock Period</p>
-                <p>All savings created through this feature are subject to a <strong>minimum 10-day lock period</strong>. During this time, you cannot withdraw or access the saved funds. Your chosen duration (30, 60, or 90 days) will apply on top of this minimum.</p>
+                <p>All savings created through this feature are subject to a <strong>minimum 10-day lock period</strong>. During this time, you cannot withdraw or access the saved funds. Amounts below ₦100,000 are locked for 30 days; amounts of ₦100,000 and above are locked for your chosen term of 3, 6 or 9 months.</p>
               </div>
 
               <div class="p-3 rounded-xl bg-ink-50">
@@ -456,27 +528,20 @@ const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
             <div>
               <label class="label">Amount per win</label>
               <select v-model.number="savingsAmount" class="input">
-                <option :value="1000">₦1,000</option>
-                <option :value="2000">₦2,000</option>
-                <option :value="3000">₦3,000</option>
-                <option :value="5000">₦5,000</option>
-                <option :value="10000">₦10,000</option>
-                <option :value="15000">₦15,000</option>
-                <option :value="20000">₦20,000</option>
-                <option :value="50000">₦50,000</option>
-                <option :value="100000">₦100,000</option>
+                <option v-for="amt in amountOptions" :key="amt" :value="amt">₦{{ amt.toLocaleString() }}</option>
               </select>
             </div>
             <div>
               <label class="label">Lock period</label>
               <select v-model.number="savingsDuration" class="input">
-                <option :value="30">30 days</option>
-                <option :value="60">60 days</option>
-                <option :value="90">90 days</option>
+                <option v-for="opt in durationOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
               </select>
+              <p class="mt-1 text-xs text-ink-500">
+                {{ savingsAmount >= 100000 ? 'Amounts of ₦100,000 and above let you choose a 3 to 9 month lock.' : 'Amounts below ₦100,000 are locked for 30 days.' }}
+              </p>
             </div>
             <div class="text-xs text-ink-500">
-              Plan name: <span class="font-semibold">World Cup 2026 -- {{ backedTeamName }}</span>
+              Plan name: <span class="font-semibold">{{ campaign.name }} — {{ backedTeamName }}</span>
             </div>
           </div>
 
@@ -484,7 +549,7 @@ const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
             <p>By ticking the box below, you authorise Sycamore to:</p>
             <ul class="list-disc pl-4 space-y-1">
               <li>Automatically move ₦{{ savingsAmount.toLocaleString() }} from your account into savings each time your team wins.</li>
-              <li>Lock those funds for {{ savingsDuration }} days in a plan named "World Cup 2026 -- {{ backedTeamName }}".</li>
+              <li>Lock those funds for {{ durationOptions.find(o => o.value === savingsDuration)?.label || (savingsDuration + ' days') }} in a plan named "{{ campaign.name }} — {{ backedTeamName }}".</li>
             </ul>
             <p>If your account doesn't have enough, we'll simply skip that win -- nothing happens and you're not charged. This is optional, and you can turn it off anytime in your team settings.</p>
           </div>
@@ -551,7 +616,7 @@ const backedTeamWins = computed(() => user.value?.backed_team_wins || 0)
           </p>
           <div class="grid gap-2">
             <a
-              href="https://appsflyer.sycamore.ng/Qthc/worldcup_website"
+              href="https://appsflyer.sycamore.ng/Qthc/EPL"
               target="_blank"
               rel="noreferrer"
               class="btn-primary w-full text-sm py-3 text-center"
