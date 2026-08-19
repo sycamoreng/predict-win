@@ -1,6 +1,6 @@
 <script setup lang="ts">
 const router = useRouter()
-const { config: campaign, load: loadCampaign } = useCampaign()
+const { config: campaign, load: loadCampaign, isLive } = useCampaign()
 const { setSession, loadParticipation, trackPulseEvent } = useAuth()
 const loading = ref(true)
 
@@ -182,9 +182,9 @@ const handleCodeInput = (event: Event) => {
 
       <div class="match-card absolute bottom-[30%] right-10 bg-white/[0.07] backdrop-blur-sm border border-white/[0.08] rounded-xl px-4 py-2.5 text-white animate-float-fast">
         <div class="flex items-center gap-3 text-xs font-bold tracking-wide">
-          <span>BAR</span>
+          <span>TOT</span>
           <span class="text-sun-400 text-sm font-extrabold">1 — 1</span>
-          <span>RMA</span>
+          <span>NEW</span>
         </div>
         <div class="text-[10px] text-white/40 mt-0.5 text-center">FT</div>
       </div>
@@ -211,9 +211,13 @@ const handleCodeInput = (event: Event) => {
         </div>
 
         <p class="text-sky-200/60 text-sm leading-relaxed max-w-[260px]">
-          <template v-if="hasCampaign && !campaignEnded">
+          <template v-if="hasCampaign && !campaignEnded && isLive">
             <span class="text-white/90 font-semibold">{{ campaignName }}</span> is live.<br />
             Make your predictions and climb the leaderboard.
+          </template>
+          <template v-else-if="hasCampaign && !campaignEnded">
+            <span class="text-white/90 font-semibold">{{ campaignName }}</span> is coming soon.<br />
+            Get ready to make your predictions and climb the leaderboard.
           </template>
           <template v-else-if="campaignEnded">
             <span class="text-white/90 font-semibold">{{ campaignName }}</span> has concluded.<br />

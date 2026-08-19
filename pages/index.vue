@@ -1,6 +1,6 @@
 <script setup lang="ts">
 const { user, loadFromStorage } = useAuth()
-const { config: campaign, load: loadCampaign } = useCampaign()
+const { config: campaign, load: loadCampaign, isLive } = useCampaign()
 const supabase = useSupabase()
 const loading = ref(true)
 
@@ -284,7 +284,7 @@ const modes = [
             <!-- Campaign badge -->
             <ClientOnly>
               <div
-                v-if="hasCampaign && !loading"
+                v-if="hasCampaign && isLive && !loading"
                 class="inline-flex items-center gap-2.5 rounded-full bg-white/[0.08] border border-white/[0.08] px-4 py-2 text-sm font-semibold backdrop-blur-md animate-fade-up"
               >
                 <span class="relative flex h-2 w-2">
@@ -300,7 +300,7 @@ const modes = [
                 class="inline-flex items-center gap-2 rounded-full bg-white/[0.06] border border-white/[0.06] px-4 py-2 text-sm font-semibold backdrop-blur-md animate-fade-up"
               >
                 <span class="w-2 h-2 rounded-full bg-sun-400" />
-                <span class="text-white/80">Coming soon</span>
+                <span class="text-white/80">{{ hasCampaign ? campaignName + ' · Coming soon' : 'Coming soon' }}</span>
               </div>
             </ClientOnly>
 
@@ -415,16 +415,20 @@ const modes = [
               </div>
               <div class="flex items-center justify-between">
                 <div class="text-center space-y-1.5">
-                  <div class="w-10 h-10 rounded-full bg-sky-500/20 mx-auto flex items-center justify-center text-lg">🇳🇬</div>
-                  <div class="text-xs font-bold text-white/90">NGA</div>
+                  <div class="w-10 h-10 rounded-full bg-white/90 mx-auto flex items-center justify-center p-1.5">
+                    <img src="https://media.api-sports.io/football/teams/42.png" alt="Arsenal" class="w-full h-full object-contain" loading="lazy" />
+                  </div>
+                  <div class="text-xs font-bold text-white/90">ARS</div>
                 </div>
                 <div class="text-center px-4">
                   <div class="text-2xl font-extrabold text-white tracking-wider">3 – 1</div>
                   <div class="text-[10px] text-mint-400 font-semibold mt-1">+15 pts</div>
                 </div>
                 <div class="text-center space-y-1.5">
-                  <div class="w-10 h-10 rounded-full bg-coral-500/20 mx-auto flex items-center justify-center text-lg">🇬🇭</div>
-                  <div class="text-xs font-bold text-white/90">GHA</div>
+                  <div class="w-10 h-10 rounded-full bg-white/90 mx-auto flex items-center justify-center p-1.5">
+                    <img src="https://media.api-sports.io/football/teams/49.png" alt="Chelsea" class="w-full h-full object-contain" loading="lazy" />
+                  </div>
+                  <div class="text-xs font-bold text-white/90">CHE</div>
                 </div>
               </div>
             </div>
@@ -440,13 +444,17 @@ const modes = [
               </div>
               <div class="flex items-center justify-between">
                 <div class="text-center space-y-1">
-                  <div class="w-8 h-8 rounded-full bg-white/10 mx-auto flex items-center justify-center text-sm">🇧🇷</div>
-                  <div class="text-[11px] font-bold text-white/80">BRA</div>
+                  <div class="w-8 h-8 rounded-full bg-white/90 mx-auto flex items-center justify-center p-1">
+                    <img src="https://media.api-sports.io/football/teams/40.png" alt="Liverpool" class="w-full h-full object-contain" loading="lazy" />
+                  </div>
+                  <div class="text-[11px] font-bold text-white/80">LIV</div>
                 </div>
                 <div class="text-xl font-extrabold text-white tracking-wider">2 – 2</div>
                 <div class="text-center space-y-1">
-                  <div class="w-8 h-8 rounded-full bg-white/10 mx-auto flex items-center justify-center text-sm">🇦🇷</div>
-                  <div class="text-[11px] font-bold text-white/80">ARG</div>
+                  <div class="w-8 h-8 rounded-full bg-white/90 mx-auto flex items-center justify-center p-1">
+                    <img src="https://media.api-sports.io/football/teams/33.png" alt="Manchester United" class="w-full h-full object-contain" loading="lazy" />
+                  </div>
+                  <div class="text-[11px] font-bold text-white/80">MUN</div>
                 </div>
               </div>
             </div>

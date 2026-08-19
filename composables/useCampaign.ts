@@ -85,5 +85,15 @@ export const useCampaign = () => {
   const isTournament = computed(() => config.value.competition_type === 'tournament')
   const campaignId = computed(() => config.value.id)
 
-  return { config, load, refresh, isLeague, isTournament, campaignId }
+  // The game counts as "live" once we open public access, or once the Premier
+  // League season kicks off (21 Aug 2026). Before either, the site should read
+  // as "coming soon" rather than claiming the campaign is live.
+  const TOURNAMENT_KICKOFF = new Date('2026-08-21T00:00:00Z').getTime()
+  const isLive = computed(() => {
+    if (config.value.public_access_enabled) return true
+    const start = config.value.starts_at ? new Date(config.value.starts_at).getTime() : TOURNAMENT_KICKOFF
+    return Date.now() >= start
+  })
+
+  return { config, load, refresh, isLeague, isTournament, campaignId, isLive }
 }

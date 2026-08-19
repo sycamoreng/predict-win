@@ -1,5 +1,4 @@
 <script setup lang="ts">
-definePageMeta({ middleware: 'auth' })
 const { trackPulseEvent } = useAuth()
 onMounted(() => trackPulseEvent('faq_viewed'))
 
