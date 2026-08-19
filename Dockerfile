@@ -20,6 +20,7 @@ COPY package*.json ./
 RUN --mount=type=secret,id=gh_token,required=true \
     printf "@sycamoreng:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n" \
       "$(cat /run/secrets/gh_token)" > .npmrc && \
+    rm -f package-lock.json && \
     npm install --no-audit --no-fund --include=optional && \
     rm -f .npmrc
 
