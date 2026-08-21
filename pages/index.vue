@@ -126,6 +126,7 @@ const features = [
 ]
 
 const WHATSAPP_COMMUNITY_URL = 'https://chat.whatsapp.com/IwD5XwS1PSB0sa6OQak50y'
+const FPL_LEAGUE_URL = 'https://fantasy.premierleague.com/leagues/auto-join/38ts86'
 
 const trustPoints = [
   { icon: 'shield', text: 'Free to play' },
@@ -1012,19 +1013,28 @@ const modes = [
             </div>
           </a>
 
-          <!-- FPL group placeholder -->
-          <div class="card relative overflow-hidden p-6 sm:p-8 flex items-center gap-5 opacity-90">
-            <div class="w-14 h-14 rounded-2xl bg-ink-200 grid place-items-center shrink-0">
-              <svg class="w-7 h-7 text-ink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+          <!-- FPL group -->
+          <a
+            :href="FPL_LEAGUE_URL"
+            target="_blank"
+            rel="noreferrer"
+            class="card group relative overflow-hidden p-6 sm:p-8 flex items-center gap-5 hover:shadow-lg hover:-translate-y-1 transition-all duration-300"
+          >
+            <div class="w-14 h-14 rounded-2xl bg-sky-600 grid place-items-center shrink-0 shadow-soft">
+              <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
             </div>
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2">
-                <h3 class="text-lg font-extrabold text-ink-900">Fantasy Premier League group</h3>
-                <span class="pill bg-ink-100 text-ink-500 text-[10px] font-bold">Coming soon</span>
+                <h3 class="text-lg font-extrabold text-ink-900 group-hover:text-sky-700 transition">Fantasy Premier League group</h3>
+                <span class="pill bg-sky-100 text-sky-700 text-[10px] font-bold">Live</span>
               </div>
-              <p class="text-sm text-ink-500 leading-relaxed mt-1">Our official FPL mini-league is on the way. Check back soon for the join details.</p>
+              <p class="text-sm text-ink-500 leading-relaxed mt-1">Join our official FPL mini-league and go head-to-head with other players all season long.</p>
+              <span class="inline-flex items-center gap-1.5 text-sm font-bold text-sky-600 mt-3">
+                Join the mini-league
+                <svg class="w-4 h-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
+              </span>
             </div>
-          </div>
+          </a>
         </div>
       </div>
     </section>

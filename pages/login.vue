@@ -403,6 +403,12 @@ const handleCodeInput = (event: Event) => {
                   autocomplete="email"
                   autofocus
                 />
+                <p class="mt-2 flex items-start gap-1.5 text-xs text-ink-400 leading-relaxed">
+                  <svg class="w-3.5 h-3.5 text-sky-500 mt-px shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>Use the same email you registered with on Sycamore so your rewards and eligibility line up.</span>
+                </p>
               </div>
 
               <!-- Error message -->
@@ -446,6 +452,19 @@ const handleCodeInput = (event: Event) => {
             <p class="text-center text-xs text-ink-400 leading-relaxed">
               We'll send a 6-digit code to your email.<br />No password needed.
             </p>
+
+            <div class="rounded-xl bg-ink-50 border border-ink-100 px-4 py-3 text-center">
+              <p class="text-xs text-ink-500 leading-relaxed">
+                Not a Sycamore customer yet?
+                <a
+                  href="https://sycamore.ng"
+                  target="_blank"
+                  rel="noreferrer"
+                  class="font-semibold text-sky-600 hover:text-sky-700 underline underline-offset-2"
+                >Register on the Sycamore app</a>
+                to qualify for rewards and prizes.
+              </p>
+            </div>
           </div>
 
           <!-- ====== CODE VERIFICATION STEP ====== -->

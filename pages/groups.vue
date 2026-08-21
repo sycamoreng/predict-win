@@ -314,7 +314,7 @@ const clubGroups = computed(() => myGroups.value.filter((g) => g.is_system))
 const userGroups = computed(() => myGroups.value.filter((g) => !g.is_system))
 
 const WHATSAPP_COMMUNITY_URL = 'https://chat.whatsapp.com/IwD5XwS1PSB0sa6OQak50y'
-const FPL_GROUP_URL = ''
+const FPL_GROUP_URL = 'https://fantasy.premierleague.com/leagues/auto-join/38ts86'
 const openCommunity = (channel: 'whatsapp' | 'fpl') => {
   trackPulseEvent('community_link_clicked', { channel })
 }
@@ -379,19 +379,25 @@ onMounted(async () => {
           </div>
         </a>
 
-        <!-- FPL group placeholder -->
-        <div class="relative overflow-hidden rounded-2xl border border-ink-200 bg-gradient-to-br from-ink-50 to-white p-5 shadow-soft">
+        <!-- FPL group -->
+        <a
+          :href="FPL_GROUP_URL"
+          target="_blank"
+          rel="noreferrer"
+          @click="openCommunity('fpl')"
+          class="relative overflow-hidden rounded-2xl border border-sky-200 bg-gradient-to-br from-sky-50 to-white p-5 shadow-soft hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 group"
+        >
           <div class="flex items-center gap-4">
-            <div class="w-12 h-12 rounded-2xl bg-ink-200 grid place-items-center shrink-0">
-              <svg class="w-6 h-6 text-ink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            <div class="w-12 h-12 rounded-2xl bg-sky-600 grid place-items-center shrink-0 shadow-soft">
+              <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
             </div>
             <div class="flex-1 min-w-0">
-              <div class="font-bold text-ink-900">Fantasy Premier League group</div>
-              <div class="text-xs text-ink-500 mt-0.5">Our official FPL mini-league. Join code coming soon.</div>
+              <div class="font-bold text-ink-900 group-hover:text-sky-700 transition">Fantasy Premier League group</div>
+              <div class="text-xs text-ink-500 mt-0.5">Join our official FPL mini-league for the season.</div>
             </div>
-            <span class="pill bg-ink-100 text-ink-500 text-[10px] font-bold shrink-0">Coming soon</span>
+            <span class="pill bg-sky-100 text-sky-700 text-[10px] font-bold shrink-0">Join</span>
           </div>
-        </div>
+        </a>
       </div>
     </section>
 

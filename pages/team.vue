@@ -488,7 +488,8 @@ const backedTeamWins = computed(() => campaignBackedTeamWins.value)
     <!-- Auto-Savings Consent Modal -->
     <Teleport to="body">
       <div v-if="showSavingsModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-        <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 sm:p-8 space-y-5">
+        <div class="bg-white rounded-2xl shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden">
+          <div class="flex-1 overflow-y-auto p-6 sm:p-8 space-y-5">
           <h3 class="text-xl font-extrabold text-ink-900">
             Save automatically when {{ backedTeamName }} wins
           </h3>
@@ -527,7 +528,9 @@ const backedTeamWins = computed(() => campaignBackedTeamWins.value)
             <input v-model="savingsConsent" type="checkbox" class="mt-0.5 w-4 h-4 rounded border-ink-300 text-sky-600 focus:ring-sky-500" />
             <span class="text-sm text-ink-700 font-medium">I understand and authorise these automatic savings transfers.</span>
           </label>
+          </div>
 
+          <div class="shrink-0 border-t border-ink-100 p-6 sm:p-8 space-y-4">
           <div v-if="savingsError" class="text-sm text-coral-600 font-medium">{{ savingsError }}</div>
 
           <div class="flex gap-3">
@@ -544,6 +547,7 @@ const backedTeamWins = computed(() => campaignBackedTeamWins.value)
             >
               No thanks
             </button>
+          </div>
           </div>
         </div>
       </div>
