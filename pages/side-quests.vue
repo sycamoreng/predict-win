@@ -67,12 +67,17 @@ const submitAnswer = async (questId: string) => {
   if (!answer || !user.value) return
   submitting.value = questId
   try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+    }
+    if (import.meta.client) {
+      const token = localStorage.getItem(APP_TOKEN_KEY)
+      if (token) headers['x-app-token'] = token
+    }
     const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/side-quests/submit`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-      },
+      headers,
       body: JSON.stringify({ email: user.value.email, quest_id: questId, answer }),
     })
     if (res.ok) {

@@ -79,6 +79,8 @@ interface NormalisedRecord {
   is_account_valid: boolean;
   qualifying_transactions_count: number;
   core_user_id: string | null;
+  core_signup_at: string | null;
+  signup_platform: string | null;
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -100,6 +102,13 @@ function validate(rec: InboundRecord): { ok: true; row: NormalisedRecord } | { o
   const coreUserId = (rec.user_id || "").trim() || null;
   const bankName = (rec.bank_name || "").trim() || null;
 
+  let coreSignupAt: string | null = null;
+  if (rec.signup_date) {
+    const parsed = new Date(rec.signup_date);
+    if (!Number.isNaN(parsed.getTime())) coreSignupAt = parsed.toISOString();
+  }
+  const signupPlatform = (rec.signup_platform || "").trim() || null;
+
   return {
     ok: true,
     row: {
@@ -112,15 +121,27 @@ function validate(rec: InboundRecord): { ok: true; row: NormalisedRecord } | { o
       is_account_valid: account ? NUBAN_RE.test(account) : false,
       qualifying_transactions_count: txCount,
       core_user_id: coreUserId,
+      core_signup_at: coreSignupAt,
+      signup_platform: signupPlatform,
     },
   };
 }
 
+function constantTimeEqual(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const ab = enc.encode(a);
+  const bb = enc.encode(b);
+  if (ab.length !== bb.length) return false;
+  let diff = 0;
+  for (let i = 0; i < ab.length; i++) diff |= ab[i] ^ bb[i];
+  return diff === 0;
+}
+
 function authorise(req: Request): boolean {
   const expected = Deno.env.get("CORE_SYNC_SECRET");
-  if (!expected) return true;
+  if (!expected) return false;
   const provided = req.headers.get("X-Sync-Secret") || "";
-  return provided === expected;
+  return constantTimeEqual(provided, expected);
 }
 
 function extractPulseTraits(rec: InboundRecord): Record<string, unknown> {
@@ -188,7 +209,7 @@ async function identifyAndTrackUser(rec: InboundRecord, existingUser: { id: stri
   }
 }
 
-async function upsertOne(row: NormalisedRecord) {
+async function upsertOne(row: NormalisedRecord, isNew: boolean) {
   const payload: Record<string, unknown> = {
     ...row,
     updated_at: new Date().toISOString(),
@@ -197,6 +218,12 @@ async function upsertOne(row: NormalisedRecord) {
   if (!row.core_user_id) delete payload.core_user_id;
   // Only write bank_name if provided (don't overwrite existing with null)
   if (!row.bank_name) delete payload.bank_name;
+  // Only write Sycamore signup metadata if provided (don't null out existing)
+  if (!row.core_signup_at) delete payload.core_signup_at;
+  if (!row.signup_platform) delete payload.signup_platform;
+  // Record signup origin ONLY when creating a brand-new account, so an
+  // existing Play guest who later opens a Sycamore account keeps origin "play".
+  if (isNew) payload.signup_source = "sycamore";
 
   const { error } = await supabase
     .from("synced_users")
@@ -237,7 +264,7 @@ Deno.serve(async (req: Request) => {
         .eq("email", result.row.email)
         .maybeSingle();
 
-      await upsertOne(result.row);
+      await upsertOne(result.row, !existing);
 
       // Fire Pulse identify + events (non-blocking)
       identifyAndTrackUser(body as InboundRecord, existing).catch(() => {});
@@ -291,6 +318,11 @@ Deno.serve(async (req: Request) => {
               const payload: Record<string, unknown> = { ...row, updated_at: new Date().toISOString() };
               if (!row.core_user_id) delete payload.core_user_id;
               if (!row.bank_name) delete payload.bank_name;
+              if (!row.core_signup_at) delete payload.core_signup_at;
+              if (!row.signup_platform) delete payload.signup_platform;
+              // Stamp origin only for brand-new accounts; never overwrite an
+              // existing player's recorded signup source.
+              if (!existingMap.has(row.email)) payload.signup_source = "sycamore";
               return payload;
             }),
             { onConflict: "email" },
@@ -334,7 +366,7 @@ Deno.serve(async (req: Request) => {
       }
       const { data: existing } = await supabase
         .from("synced_users")
-        .select("id, active_customer_flag, core_user_id")
+        .select("id, active_customer_flag, core_user_id, name, username")
         .eq("email", email)
         .maybeSingle();
       if (!existing) {
@@ -365,6 +397,28 @@ Deno.serve(async (req: Request) => {
         pulseTrack(pulseExternalId, "customer_activated", {
           email,
           qualifying_transactions_count: txCount,
+        }).catch(() => {});
+
+        // Newly eligible: leaderboard + power-up chips just unlocked. Send the
+        // "you're in" email (best-effort; skips if no template id is set yet).
+        const firstName = deriveFirstName(existing.name, existing.username, email);
+        const sendEmailUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-email`;
+        fetch(sendEmailUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({
+            event_name: "eligibility_unlocked",
+            to_email: email,
+            to_name: existing.name || firstName,
+            dynamic_template_data: {
+              firstName,
+              leaderboardLink: `${APP_BASE_URL}/leaderboard`,
+              predictLink: `${APP_BASE_URL}/predict`,
+            },
+          }),
         }).catch(() => {});
       }
 

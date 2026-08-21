@@ -78,7 +78,7 @@ const steps = [
   {
     step: '02',
     title: 'Predict',
-    description: 'Call the correct result, exact score, and first goalscorer for every fixture on the card.',
+    description: 'Call the correct result, exact score, and first team to score for every fixture on the card.',
     color: 'mint',
     icon: 'target',
   },
@@ -608,7 +608,7 @@ const modes = [
               </div>
               <div class="text-4xl sm:text-5xl font-extrabold text-sky-600 mb-2">{{ scoringResult }}</div>
               <div class="text-sm font-bold text-ink-900 mb-1">Correct result</div>
-              <div class="text-xs text-ink-400 leading-relaxed">Win, draw, or loss — call the outcome right</div>
+              <div class="text-xs text-ink-400 leading-relaxed">Home Win, Away Win, or Draw — call the outcome right</div>
             </div>
 
             <!-- First to score -->
@@ -620,7 +620,7 @@ const modes = [
                 </svg>
               </div>
               <div class="text-4xl sm:text-5xl font-extrabold text-mint-600 mb-2">{{ scoringFirstToScore }}</div>
-              <div class="text-sm font-bold text-ink-900 mb-1">First goalscorer</div>
+              <div class="text-sm font-bold text-ink-900 mb-1">First team to score</div>
               <div class="text-xs text-ink-400 leading-relaxed">Pick the team to score first in the match</div>
             </div>
 

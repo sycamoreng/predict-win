@@ -247,6 +247,18 @@ const publishing = ref(false)
 const suggestNote = ref<string | null>(null)
 const suggestedQuests = ref<Array<any & { include: boolean }>>([])
 
+const adminFetchHeaders = (): Record<string, string> => {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+  }
+  if (import.meta.client) {
+    const token = localStorage.getItem(APP_ADMIN_TOKEN_KEY)
+    if (token) headers['x-app-admin-token'] = token
+  }
+  return headers
+}
+
 const suggestQuests = async () => {
   if (!suggestWeek.value) return
   suggesting.value = true
@@ -255,7 +267,7 @@ const suggestQuests = async () => {
   try {
     const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/side-quests/preview`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+      headers: adminFetchHeaders(),
       body: JSON.stringify({ matchweek: suggestWeek.value }),
     })
     const data = await res.json()
@@ -387,7 +399,7 @@ const generateQuests = async () => {
   try {
     const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/side-quests/generate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+      headers: adminFetchHeaders(),
       body: JSON.stringify({ matchweek: generateWeek.value }),
     })
     const data = await res.json()
@@ -441,7 +453,7 @@ const syncPlayers = async (force = false) => {
   try {
     const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sync-players`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+      headers: adminFetchHeaders(),
       body: JSON.stringify({ campaign_id: campaignConfig.value.id, force }),
     })
     const data = await res.json()
@@ -463,10 +475,10 @@ const generateH2HPairings = async () => {
   h2hLoading.value = true
   h2hResult.value = null
   try {
-    const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/predictions`, {
+    const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/predictions/generate-h2h`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-      body: JSON.stringify({ route: 'generate-h2h', email: admin.value!.email, campaign_id: campaignConfig.value.id, week_number: h2hWeek.value }),
+      headers: adminFetchHeaders(),
+      body: JSON.stringify({ campaign_id: campaignConfig.value.id, week_number: h2hWeek.value }),
     })
     const data = await res.json()
     if (!res.ok) {
@@ -1284,6 +1296,9 @@ const reportData = ref<{
   totalUsers: number
   sycamoreUsers: number
   guestUsers: number
+  playOriginUsers: number
+  sycamoreOriginUsers: number
+  playConvertedToSycamore: number
   activeCustomers: number
   usersWithTeam: number
   savingsEnabled: number
@@ -1317,13 +1332,15 @@ const reportData = ref<{
   playersRoster: number
 } | null>(null)
 
-type ReportPanel = 'overview' | 'participation' | 'savings' | 'leagues' | 'audit'
+type ReportPanel = 'overview' | 'participation' | 'savings' | 'leagues' | 'groups' | 'rewards' | 'audit'
 const reportPanel = ref<ReportPanel>('overview')
 const reportPanels: Array<{ key: ReportPanel; label: string }> = [
   { key: 'overview', label: 'Overview' },
   { key: 'participation', label: 'Participation' },
   { key: 'savings', label: 'Savings' },
   { key: 'leagues', label: 'Private leagues' },
+  { key: 'groups', label: 'Group memberships' },
+  { key: 'rewards', label: 'Monthly rewards' },
   { key: 'audit', label: 'Timestamp audit' },
 ]
 const namedReportLoading = ref(false)
@@ -1332,7 +1349,21 @@ const auditMatchweek = ref('')
 const participationReport = ref<any>(null)
 const savingsReport = ref<any>(null)
 const leaguesReport = ref<any>(null)
+const groupsReport = ref<any>(null)
+const groupSearch = ref('')
 const auditReport = ref<any>(null)
+const rewardsReport = ref<any>(null)
+const rewardsMonth = ref('')
+
+const filteredUserGroups = computed(() => {
+  const list: any[] = groupsReport.value?.user_groups ?? []
+  const q = groupSearch.value.trim().toLowerCase()
+  if (!q) return list
+  return list.filter((g: any) =>
+    (g.name || '').toLowerCase().includes(q) ||
+    (g.code || '').toLowerCase().includes(q) ||
+    (g.creator || '').toLowerCase().includes(q))
+})
 
 const loadNamedReport = async (panel: Exclude<ReportPanel, 'overview'>) => {
   if (!admin.value) return
@@ -1341,12 +1372,15 @@ const loadNamedReport = async (panel: Exclude<ReportPanel, 'overview'>) => {
   try {
     const body: Record<string, unknown> = { admin_email: admin.value.email }
     if (panel === 'audit' && auditMatchweek.value) body.matchweek = auditMatchweek.value
+    if (panel === 'rewards' && rewardsMonth.value) body.month = rewardsMonth.value
     const res: any = await call('reports/' + panel, body)
     const report = res?.report
     if (!report) throw new Error('No data returned')
     if (panel === 'participation') participationReport.value = report
     else if (panel === 'savings') savingsReport.value = report
     else if (panel === 'leagues') leaguesReport.value = report
+    else if (panel === 'groups') groupsReport.value = report
+    else if (panel === 'rewards') { rewardsReport.value = report; rewardsMonth.value = report.month || '' }
     else if (panel === 'audit') auditReport.value = report
   } catch (err: any) {
     namedReportError.value = err?.message || 'Failed to load report'
@@ -1403,6 +1437,59 @@ const exportSavingsCsv = () => {
   })))
 }
 
+const exportGroupsCsv = (kind: 'clubs' | 'user') => {
+  const r = groupsReport.value
+  if (!r) return
+  if (kind === 'clubs') {
+    downloadReportCsv('club-league-memberships.csv', (r.clubs || []).map((c: any) => ({
+      name: c.name,
+      members: c.members,
+    })))
+  } else {
+    downloadReportCsv('user-league-memberships.csv', (r.user_groups || []).map((g: any) => ({
+      name: g.name,
+      code: g.code || '',
+      creator: g.creator || '',
+      members: g.members,
+      invites_sent: g.invites_sent,
+      created_at: g.created_at,
+    })))
+  }
+}
+
+const exportRewardsPrivateCsv = () => {
+  const r = rewardsReport.value
+  if (!r) return
+  downloadReportCsv('monthly-private-group-rewards-' + (r.month || '') + '.csv', (r.private_groups || []).map((g: any) => ({
+    league: g.name,
+    code: g.code || '',
+    creator: g.creator || '',
+    members: g.member_count,
+    consistent_members: g.consistent_members,
+    consistency_rate_pct: g.consistency_rate_pct,
+    cumulative_backed_value: g.cumulative_backed_value,
+  })))
+}
+
+const exportRewardsClubsCsv = () => {
+  const r = rewardsReport.value
+  if (!r) return
+  const rows: Array<Record<string, any>> = []
+  for (const c of (r.club_top_performers || [])) {
+    for (const p of (c.top_performers || [])) {
+      rows.push({
+        club: c.name,
+        rank: p.rank,
+        username: p.username || '',
+        account_number: p.account_number || '',
+        points_month: p.points_month,
+        scoring_predictions: p.scoring_preds,
+      })
+    }
+  }
+  downloadReportCsv('monthly-club-top-performers-' + (r.month || '') + '.csv', rows)
+}
+
 const exportAuditCsv = () => {
   const r = auditReport.value
   if (!r) return
@@ -1442,75 +1529,30 @@ const loadReports = async () => {
     // Auto-savings and national-team backing were World Cup mechanics with no league equivalent.
     const isTournamentCampaign = campaignConfig.value?.competition_type === 'tournament'
 
-    let usersQuery = supabase.from('synced_users').select('*', { count: 'exact', head: true })
-    if (from) usersQuery = usersQuery.gte('created_at', from)
-    if (to) usersQuery = usersQuery.lte('created_at', to)
-    const { count: totalUsers } = await usersQuery
+    const stats = await call('admin-users', {
+      mode: 'stats',
+      campaign_id: cid,
+      from,
+      to,
+      is_tournament: isTournamentCampaign,
+    })
+    const totalUsers = stats.totalUsers || 0
+    const sycamoreUsers = stats.sycamoreUsers || 0
+    const guestUsers = stats.guestUsers || 0
+    const playOriginUsers = stats.playOriginUsers || 0
+    const sycamoreOriginUsers = stats.sycamoreOriginUsers || 0
+    const playConvertedToSycamore = stats.playConvertedToSycamore || 0
+    const activeCustomers = stats.activeCustomers || 0
+    const usersWithTeam = stats.usersWithTeam || 0
+    const campaignUsers = stats.campaignUsers || 0
+    const campaignWithAccount = stats.campaignWithAccount || 0
+    const campaignGuests = stats.campaignGuests || 0
+    const campaignActive = stats.campaignActive || 0
+    const savingsEnabled = stats.savingsEnabled || 0
+    const totalSavingsAmount = stats.totalSavingsAmount || 0
 
-    let sycQuery = supabase.from('synced_users').select('*', { count: 'exact', head: true }).not('account_number', 'is', null)
-    if (from) sycQuery = sycQuery.gte('created_at', from)
-    if (to) sycQuery = sycQuery.lte('created_at', to)
-    const { count: sycamoreUsers } = await sycQuery
-
-    let guestQuery = supabase.from('synced_users').select('*', { count: 'exact', head: true }).is('account_number', null)
-    if (from) guestQuery = guestQuery.gte('created_at', from)
-    if (to) guestQuery = guestQuery.lte('created_at', to)
-    const { count: guestUsers } = await guestQuery
-
-    let activeQuery = supabase.from('synced_users').select('*', { count: 'exact', head: true }).eq('active_customer_flag', true)
-    if (from) activeQuery = activeQuery.gte('created_at', from)
-    if (to) activeQuery = activeQuery.lte('created_at', to)
-    const { count: activeCustomers } = await activeQuery
-
-    let teamQuery = supabase.from('synced_users').select('*', { count: 'exact', head: true }).not('backed_team_id', 'is', null)
-    if (from) teamQuery = teamQuery.gte('created_at', from)
-    if (to) teamQuery = teamQuery.lte('created_at', to)
-    const { count: usersWithTeam } = await teamQuery
-
-    // Campaign-scoped user counts (this campaign only, via participants)
-    let campaignUsers = 0
-    let campaignWithAccount = 0
-    let campaignGuests = 0
-    let campaignActive = 0
-    if (cid) {
-      const partBase = () => supabase.from('campaign_participants').select('*, synced_users!inner(account_number, active_customer_flag)', { count: 'exact', head: true }).eq('campaign_id', cid)
-      const { count: cuTotal } = await partBase()
-      campaignUsers = cuTotal || 0
-      const { count: cuAcct } = await partBase().not('synced_users.account_number', 'is', null)
-      campaignWithAccount = cuAcct || 0
-      const { count: cuGuest } = await partBase().is('synced_users.account_number', null)
-      campaignGuests = cuGuest || 0
-      const { count: cuActive } = await partBase().eq('synced_users.active_customer_flag', true)
-      campaignActive = cuActive || 0
-    }
-
-    let savingsEnabled = 0
-    let totalSavingsAmount = 0
     const teamData: any[] = []
     if (isTournamentCampaign) {
-      let savingsQuery = supabase.from('synced_users').select('*', { count: 'exact', head: true }).eq('auto_savings_enabled', true)
-      if (from) savingsQuery = savingsQuery.gte('created_at', from)
-      if (to) savingsQuery = savingsQuery.lte('created_at', to)
-      const { count: savingsCount } = await savingsQuery
-      savingsEnabled = savingsCount || 0
-
-      const savingsRows: Array<{ auto_savings_amount: number | null }> = []
-      {
-        const PAGE = 1000
-        let start = 0
-        while (true) {
-          let q = supabase.from('synced_users').select('auto_savings_amount').eq('auto_savings_enabled', true).not('auto_savings_amount', 'is', null)
-          if (from) q = q.gte('created_at', from)
-          if (to) q = q.lte('created_at', to)
-          const { data: page } = await q.order('id', { ascending: true }).range(start, start + PAGE - 1)
-          if (!page || page.length === 0) break
-          savingsRows.push(...page)
-          if (page.length < PAGE) break
-          start += PAGE
-        }
-      }
-      totalSavingsAmount = savingsRows.reduce((sum, r) => sum + (r.auto_savings_amount || 0), 0)
-
       {
         const PAGE = 1000
         let start = 0
@@ -1573,12 +1615,12 @@ const loadReports = async () => {
     }
     const teamDistribution = Object.values(teamCounts).sort((a, b) => b.count - a.count)
 
-    const signupRes = await call('reports/daily-signups', { admin_email: admin.value!.email })
+    const signupRes = await call('reports/daily-signups', { admin_email: admin.value!.email, campaign_id: cid })
     let dailySignups = (signupRes.rows || []).map((r: any) => ({ date: r.date, count: Number(r.count) }))
     if (from) dailySignups = dailySignups.filter((d) => d.date >= from)
     if (to) dailySignups = dailySignups.filter((d) => d.date <= (reportDateTo.value || '9999-12-31'))
 
-    const predRes = await call('reports/daily-predictions', { admin_email: admin.value!.email })
+    const predRes = await call('reports/daily-predictions', { admin_email: admin.value!.email, campaign_id: cid })
     let dailyPredictions = (predRes.rows || []).map((r: any) => ({ date: r.date, count: Number(r.count) }))
     if (from) dailyPredictions = dailyPredictions.filter((d) => d.date >= from)
     if (to) dailyPredictions = dailyPredictions.filter((d) => d.date <= (reportDateTo.value || '9999-12-31'))
@@ -1640,6 +1682,9 @@ const loadReports = async () => {
     reportData.value = {
       totalUsers: totalUsers || 0,
       sycamoreUsers: sycamoreUsers || 0,
+      playOriginUsers: playOriginUsers || 0,
+      sycamoreOriginUsers: sycamoreOriginUsers || 0,
+      playConvertedToSycamore: playConvertedToSycamore || 0,
       guestUsers: guestUsers || 0,
       activeCustomers: activeCustomers || 0,
       usersWithTeam: usersWithTeam || 0,
@@ -1686,42 +1731,8 @@ const loadReports = async () => {
 const loadGuestList = async () => {
   guestListLoading.value = true
   try {
-    const { data: guests } = await supabase
-      .from('synced_users')
-      .select('id, email, username, social_handles, created_at')
-      .is('account_number', null)
-      .order('created_at', { ascending: false })
-      .limit(100)
-
-    const guestIds = (guests || []).map((g) => g.id)
-    let predCounts: Record<string, number> = {}
-
-    if (guestIds.length) {
-      const PAGE = 1000
-      let start = 0
-      while (true) {
-        const { data: preds } = await supabase
-          .from('predictions')
-          .select('user_id')
-          .in('user_id', guestIds)
-          .order('user_id', { ascending: true })
-          .range(start, start + PAGE - 1)
-        if (!preds || preds.length === 0) break
-        for (const p of preds) {
-          predCounts[p.user_id] = (predCounts[p.user_id] || 0) + 1
-        }
-        if (preds.length < PAGE) break
-        start += PAGE
-      }
-    }
-
-    guestList.value = (guests || []).map((g) => ({
-      email: g.email,
-      username: g.username || '',
-      social_handles: g.social_handles || null,
-      created_at: g.created_at,
-      prediction_count: predCounts[g.id] || 0,
-    }))
+    const { rows } = await call('admin-users', { mode: 'guest-list' })
+    guestList.value = rows || []
   } finally {
     guestListLoading.value = false
   }
@@ -1730,51 +1741,13 @@ const loadGuestList = async () => {
 const exportGuestCsv = async () => {
   guestExportLoading.value = true
   try {
-    const PAGE_SIZE = 1000
-    let allGuests: any[] = []
-    let offset = 0
-    let hasMore = true
-
-    while (hasMore) {
-      let query = supabase
-        .from('synced_users')
-        .select('id, email, name, username, phone_number, social_handles, created_at, total_points')
-        .is('account_number', null)
-        .order('created_at', { ascending: false })
-        .range(offset, offset + PAGE_SIZE - 1)
-
-      if (reportDateFrom.value) query = query.gte('created_at', reportDateFrom.value)
-      if (reportDateTo.value) query = query.lte('created_at', reportDateTo.value + 'T23:59:59')
-
-      const { data } = await query
-      if (!data || data.length === 0) { hasMore = false; break }
-      allGuests = allGuests.concat(data)
-      if (data.length < PAGE_SIZE) hasMore = false
-      else offset += PAGE_SIZE
-    }
-
-    const guestIds = allGuests.map((g) => g.id)
+    const { rows: allGuests = [] } = await call('admin-users', {
+      mode: 'guest-export',
+      from: reportDateFrom.value || null,
+      to: reportDateTo.value ? reportDateTo.value + 'T23:59:59' : null,
+    })
     const predCounts: Record<string, number> = {}
-
-    for (let i = 0; i < guestIds.length; i += 500) {
-      const batch = guestIds.slice(i, i + 500)
-      const PAGE = 1000
-      let start = 0
-      while (true) {
-        const { data: preds } = await supabase
-          .from('predictions')
-          .select('user_id')
-          .in('user_id', batch)
-          .order('user_id', { ascending: true })
-          .range(start, start + PAGE - 1)
-        if (!preds || preds.length === 0) break
-        for (const p of preds) {
-          predCounts[p.user_id] = (predCounts[p.user_id] || 0) + 1
-        }
-        if (preds.length < PAGE) break
-        start += PAGE
-      }
-    }
+    for (const g of allGuests) predCounts[g.id] = g.prediction_count || 0
 
     const headers = ['email', 'name', 'username', 'phone_number', 'twitter', 'instagram', 'threads', 'tiktok', 'total_points', 'predictions', 'joined']
     const csv = [headers.join(',')]
@@ -1828,34 +1801,21 @@ const usersPreview = ref<any[]>([])
 const usersPreviewLoading = ref(false)
 const usersPreviewTotal = ref(0)
 
-const buildUserQuery = (select: string, opts?: { countOnly?: boolean }) => {
-  let query = opts?.countOnly
-    ? supabase.from('synced_users').select(select, { count: 'exact', head: true })
-    : supabase.from('synced_users').select(select)
-
-  if (userFilter.value === 'with_account') query = query.not('account_number', 'is', null).neq('account_number', '')
-  else if (userFilter.value === 'no_account') query = query.or('account_number.is.null,account_number.eq.')
-  else if (userFilter.value === 'active_customers') query = query.eq('active_customer_flag', true)
-  else if (userFilter.value === 'backed_team') query = query.not('backed_team_id', 'is', null)
-  else if (userFilter.value === 'auto_savings') query = query.eq('auto_savings_enabled', true)
-
-  if (userDateFrom.value) query = query.gte('created_at', userDateFrom.value)
-  if (userDateTo.value) query = query.lte('created_at', userDateTo.value + 'T23:59:59')
-  if (userSearchEmail.value.trim()) query = query.ilike('email', `%${userSearchEmail.value.trim()}%`)
-
-  return query
-}
+const userQueryParams = () => ({
+  filter: userFilter.value,
+  from: userDateFrom.value || null,
+  to: userDateTo.value ? userDateTo.value + 'T23:59:59' : null,
+  search: userSearchEmail.value.trim() || null,
+})
 
 const loadUsersPreview = async () => {
   usersPreviewLoading.value = true
   try {
-    const { count } = await buildUserQuery('*', { countOnly: true })
+    const { count } = await call('admin-users', { mode: 'users-list', ...userQueryParams(), count_only: true })
     usersPreviewTotal.value = count || 0
 
-    const { data } = await buildUserQuery('id, email, name, username, account_number, phone_number, active_customer_flag, total_points, backed_team_id, auto_savings_enabled, created_at')
-      .order('created_at', { ascending: false })
-      .limit(20)
-    usersPreview.value = data || []
+    const { rows } = await call('admin-users', { mode: 'users-list', ...userQueryParams(), limit: 20, offset: 0 })
+    usersPreview.value = rows || []
   } finally {
     usersPreviewLoading.value = false
   }
@@ -1865,16 +1825,13 @@ const fetchAllFilteredUsers = async () => {
   const PAGE_SIZE = 1000
   let allUsers: any[] = []
   let offset = 0
-  let hasMore = true
 
-  while (hasMore) {
-    const { data } = await buildUserQuery('*')
-      .order('created_at', { ascending: false })
-      .range(offset, offset + PAGE_SIZE - 1)
-    if (!data || data.length === 0) { hasMore = false; break }
-    allUsers = allUsers.concat(data)
-    if (data.length < PAGE_SIZE) hasMore = false
-    else offset += PAGE_SIZE
+  while (true) {
+    const { rows } = await call('admin-users', { mode: 'users-list', ...userQueryParams(), limit: PAGE_SIZE, offset })
+    if (!rows || rows.length === 0) break
+    allUsers = allUsers.concat(rows)
+    if (rows.length < PAGE_SIZE) break
+    offset += PAGE_SIZE
   }
   return allUsers
 }
@@ -1934,39 +1891,16 @@ const acquisitionData = ref<{
 const acquisitionLoading = ref(false)
 const acquisitionExporting = ref(false)
 
-// Users who joined after the current campaign launched (derived from campaign config, not hardcoded)
-const acquisitionCutoff = computed(() => {
-  const d = campaignConfig.value?.week_start_date
-  return d ? `${d}T00:00:00+00:00` : '2026-06-08T23:59:59+00:00'
-})
-
 const loadAcquisition = async () => {
   acquisitionLoading.value = true
   try {
-    const { count: totalOrganic } = await supabase
-      .from('synced_users')
-      .select('*', { count: 'exact', head: true })
-      .eq('is_staff', false)
-      .gt('created_at', acquisitionCutoff.value)
-
-    const { count: neverTransacted } = await supabase
-      .from('synced_users')
-      .select('*', { count: 'exact', head: true })
-      .eq('is_staff', false)
-      .gt('created_at', acquisitionCutoff.value)
-      .eq('qualifying_transactions_count', 0)
-      .eq('active_customer_flag', false)
-
-    const total = totalOrganic || 0
-    const never = neverTransacted || 0
-    const active = total - never
-
-    acquisitionData.value = {
-      totalOrganic: total,
-      neverTransacted: never,
-      becameActive: active,
-      conversionRate: total > 0 ? Math.round((active / total) * 100) : 0,
+    const cid = campaignConfig.value?.id || null
+    if (!cid) {
+      acquisitionData.value = { totalOrganic: 0, neverTransacted: 0, becameActive: 0, conversionRate: 0 }
+      return
     }
+
+    acquisitionData.value = await call('admin-users', { mode: 'acquisition', campaign_id: cid })
   } catch (e) {
     error.value = (e as Error).message
   } finally {
@@ -1977,27 +1911,8 @@ const loadAcquisition = async () => {
 const exportAcquisitionCsv = async () => {
   acquisitionExporting.value = true
   try {
-    const PAGE_SIZE = 1000
-    let allUsers: any[] = []
-    let offset = 0
-    let hasMore = true
-
-    while (hasMore) {
-      const { data } = await supabase
-        .from('synced_users')
-        .select('id, email, name, username, phone_number, social_handles, created_at, total_points, backed_team_id')
-        .eq('is_staff', false)
-        .gt('created_at', acquisitionCutoff.value)
-        .eq('qualifying_transactions_count', 0)
-        .eq('active_customer_flag', false)
-        .order('created_at', { ascending: false })
-        .range(offset, offset + PAGE_SIZE - 1)
-
-      if (!data || data.length === 0) { hasMore = false; break }
-      allUsers = allUsers.concat(data)
-      if (data.length < PAGE_SIZE) hasMore = false
-      else offset += PAGE_SIZE
-    }
+    const cid = campaignConfig.value?.id || null
+    const { rows: allUsers = [] } = await call('admin-users', { mode: 'acquisition-export', campaign_id: cid })
 
     const headers = ['email', 'name', 'username', 'phone_number', 'twitter', 'instagram', 'threads', 'tiktok', 'total_points', 'joined']
     const csv = [headers.join(',')]
@@ -3358,36 +3273,12 @@ watch(activeTab, (tab) => {
         <div v-if="reportLoading && !reportData" class="card h-72 animate-pulse bg-ink-100/40"></div>
 
         <template v-else-if="reportData">
-          <!-- All-time user base (inception to date) -->
+          <!-- This campaign (primary focus) -->
           <div>
-            <div class="text-xs font-semibold uppercase tracking-wide text-ink-400 mb-2">All-time user base (inception to date)</div>
-            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-              <div class="card p-4 text-center">
-                <div class="text-2xl font-extrabold text-ink-900">{{ reportData.totalUsers }}</div>
-                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Total users</div>
-              </div>
-              <div class="card p-4 text-center">
-                <div class="text-2xl font-extrabold text-sky-600">{{ reportData.sycamoreUsers }}</div>
-                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">With account no.</div>
-              </div>
-              <div class="card p-4 text-center">
-                <div class="text-2xl font-extrabold text-sun-600">{{ reportData.guestUsers }}</div>
-                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">No account no.</div>
-              </div>
-              <div class="card p-4 text-center">
-                <div class="text-2xl font-extrabold text-mint-600">{{ reportData.activeCustomers }}</div>
-                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Active customers</div>
-              </div>
-              <div v-if="reportData.isTournament" class="card p-4 text-center">
-                <div class="text-2xl font-extrabold text-coral-600">{{ reportData.usersWithTeam }}</div>
-                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Backed a team</div>
-              </div>
+            <div class="flex items-center gap-2 mb-2">
+              <div class="text-sm font-bold text-ink-900">{{ campaignConfig?.name || 'Current campaign' }}</div>
+              <span class="pill bg-emerald-100 text-emerald-700 text-[10px] font-bold uppercase tracking-wide">This campaign</span>
             </div>
-          </div>
-
-          <!-- This campaign -->
-          <div>
-            <div class="text-xs font-semibold uppercase tracking-wide text-ink-400 mb-2">This campaign ({{ campaignConfig?.name || 'current' }})</div>
             <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
               <div class="card p-4 text-center">
                 <div class="text-2xl font-extrabold text-ink-900">{{ reportData.campaignUsers }}</div>
@@ -3408,6 +3299,33 @@ watch(activeTab, (tab) => {
               <div class="card p-4 text-center">
                 <div class="text-2xl font-extrabold text-ink-700">{{ reportData.totalPredictions }}</div>
                 <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Predictions</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Platform-wide context (secondary) -->
+          <div>
+            <div class="text-xs font-semibold uppercase tracking-wide text-ink-400 mb-2">Platform-wide, all campaigns since inception</div>
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+              <div class="card p-4 text-center bg-ink-50/40">
+                <div class="text-2xl font-extrabold text-ink-900">{{ reportData.totalUsers }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Total users</div>
+              </div>
+              <div class="card p-4 text-center bg-ink-50/40">
+                <div class="text-2xl font-extrabold text-sky-600">{{ reportData.sycamoreUsers }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">With account no.</div>
+              </div>
+              <div class="card p-4 text-center bg-ink-50/40">
+                <div class="text-2xl font-extrabold text-sun-600">{{ reportData.guestUsers }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">No account no.</div>
+              </div>
+              <div class="card p-4 text-center bg-ink-50/40">
+                <div class="text-2xl font-extrabold text-mint-600">{{ reportData.activeCustomers }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Active customers</div>
+              </div>
+              <div v-if="reportData.isTournament" class="card p-4 text-center bg-ink-50/40">
+                <div class="text-2xl font-extrabold text-coral-600">{{ reportData.usersWithTeam }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Backed a team</div>
               </div>
             </div>
           </div>
@@ -3638,7 +3556,7 @@ watch(activeTab, (tab) => {
             <div class="flex items-center justify-between">
               <div>
                 <h3 class="font-bold text-ink-900">Organic acquisition</h3>
-                <p class="text-sm text-ink-500">Users who signed up on the predictor after the campaign launched and never transacted on Sycamore.</p>
+                <p class="text-sm text-ink-500">Players who joined {{ campaignConfig?.name || 'this campaign' }}, split by whether they have since transacted on Sycamore. “Became active” are active Sycamore customers or those with qualifying transactions.</p>
               </div>
               <button
                 @click="exportAcquisitionCsv"
@@ -3654,7 +3572,7 @@ watch(activeTab, (tab) => {
             <div v-else-if="acquisitionData" class="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div class="bg-slate-50 rounded-xl p-4 text-center">
                 <div class="text-2xl font-extrabold text-ink-900">{{ acquisitionData.totalOrganic.toLocaleString() }}</div>
-                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Total organic signups</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Players in campaign</div>
               </div>
               <div class="bg-slate-50 rounded-xl p-4 text-center">
                 <div class="text-2xl font-extrabold text-coral-600">{{ acquisitionData.neverTransacted.toLocaleString() }}</div>
@@ -3688,9 +3606,38 @@ watch(activeTab, (tab) => {
             </div>
           </div>
 
+          <!-- Signup origin (immutable: where each player first signed up) -->
+          <div class="card p-5 space-y-4">
+            <div>
+              <h3 class="font-bold text-ink-900">Signup origin</h3>
+              <p class="text-sm text-ink-500">Where each player first signed up, recorded once and never changed — unlike account status, this stays accurate even after a Play player later opens a Sycamore account.</p>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div class="bg-slate-50 rounded-xl p-4 text-center">
+                <div class="text-2xl font-extrabold text-emerald-600">{{ reportData.playOriginUsers.toLocaleString() }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">First signed up on Play</div>
+              </div>
+              <div class="bg-slate-50 rounded-xl p-4 text-center">
+                <div class="text-2xl font-extrabold text-sky-600">{{ reportData.sycamoreOriginUsers.toLocaleString() }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">First signed up on Sycamore</div>
+              </div>
+              <div class="bg-slate-50 rounded-xl p-4 text-center">
+                <div class="text-2xl font-extrabold text-mint-600">{{ reportData.playConvertedToSycamore.toLocaleString() }}</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Play players who opened a Sycamore account</div>
+              </div>
+              <div class="bg-slate-50 rounded-xl p-4 text-center">
+                <div class="text-2xl font-extrabold text-ink-900">{{ reportData.playOriginUsers > 0 ? Math.round(100 * reportData.playConvertedToSycamore / reportData.playOriginUsers) : 0 }}%</div>
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Play → Sycamore conversion</div>
+              </div>
+            </div>
+          </div>
+
           <!-- Daily signups -->
           <div class="card p-5 space-y-3">
-            <h3 class="font-bold text-ink-900">Daily signups</h3>
+            <div>
+              <h3 class="font-bold text-ink-900">Daily signups</h3>
+              <p class="text-xs text-ink-500">Players joining {{ campaignConfig?.name || 'this campaign' }} per day.</p>
+            </div>
             <div v-if="!reportData.dailySignups.length" class="text-sm text-ink-400">No data yet.</div>
             <div v-else class="overflow-x-auto">
               <div class="flex items-end gap-1 h-40 pt-8 min-w-[400px] relative">
@@ -3718,7 +3665,10 @@ watch(activeTab, (tab) => {
 
           <!-- Daily predictions -->
           <div class="card p-5 space-y-3">
-            <h3 class="font-bold text-ink-900">Daily predictions</h3>
+            <div>
+              <h3 class="font-bold text-ink-900">Daily predictions</h3>
+              <p class="text-xs text-ink-500">Predictions made in {{ campaignConfig?.name || 'this campaign' }} per day.</p>
+            </div>
             <div v-if="!reportData.dailyPredictions.length" class="text-sm text-ink-400">No data yet.</div>
             <div v-else class="overflow-x-auto">
               <div class="flex items-end gap-1 h-40 pt-8 min-w-[400px] relative">
@@ -3910,21 +3860,196 @@ watch(activeTab, (tab) => {
           <div class="flex items-center justify-between gap-3 flex-wrap">
             <div>
               <h3 class="font-bold text-ink-900">Private league viral coefficient</h3>
-              <p class="text-sm text-ink-500">Private leagues created and members joining via invite.</p>
+              <p class="text-sm text-ink-500">Invites sent vs. members earned for this campaign's private leagues.</p>
             </div>
             <button @click="loadNamedReport('leagues')" :disabled="namedReportLoading" class="pill bg-ink-100 text-ink-700 hover:bg-ink-200 text-xs shrink-0">{{ namedReportLoading ? 'Loading...' : 'Refresh' }}</button>
           </div>
           <div v-if="namedReportError" class="card p-4 text-sm text-coral-600">{{ namedReportError }}</div>
           <div v-if="namedReportLoading && !leaguesReport" class="card h-40 animate-pulse bg-ink-100/40"></div>
           <template v-else-if="leaguesReport">
+            <div class="card p-5 bg-emerald-50 border border-emerald-100 flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <div class="text-xs text-emerald-700 font-semibold uppercase tracking-wider">Viral coefficient</div>
+                <div class="text-4xl font-extrabold text-emerald-700 mt-1">{{ leaguesReport.viral_coefficient ?? 0 }}</div>
+                <div class="text-xs text-ink-500 mt-1">Members earned for every invite sent</div>
+              </div>
+              <div class="grid grid-cols-2 gap-3 text-center">
+                <div><div class="text-2xl font-extrabold text-ink-900">{{ leaguesReport.invites_sent ?? 0 }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Invites sent</div></div>
+                <div><div class="text-2xl font-extrabold text-sky-600">{{ leaguesReport.distinct_inviters ?? 0 }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">People inviting</div></div>
+              </div>
+            </div>
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div class="card p-4 text-center"><div class="text-2xl font-extrabold text-ink-900">{{ leaguesReport.leagues_created }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Leagues created</div></div>
               <div class="card p-4 text-center"><div class="text-2xl font-extrabold text-sky-600">{{ leaguesReport.total_members }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Total members</div></div>
               <div class="card p-4 text-center"><div class="text-2xl font-extrabold text-mint-600">{{ leaguesReport.joins_via_invite }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Joined via invite</div></div>
               <div class="card p-4 text-center"><div class="text-2xl font-extrabold text-coral-500">{{ leaguesReport.avg_members_per_league }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Avg members/league</div></div>
             </div>
+            <div v-if="leaguesReport.invites_by_channel?.length" class="card p-4">
+              <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mb-3">Invites by channel</div>
+              <div class="flex flex-wrap gap-2">
+                <span v-for="c in leaguesReport.invites_by_channel" :key="c.channel" class="pill bg-ink-100 text-ink-700 text-xs capitalize">{{ c.channel }}: {{ c.count }}</span>
+              </div>
+            </div>
             <div class="card p-4 bg-sun-50 border border-sun-100">
               <p class="text-sm text-ink-600">{{ leaguesReport.note }}</p>
+            </div>
+          </template>
+        </div>
+
+        <!-- GROUPS PANEL -->
+        <div v-if="reportPanel === 'groups'" class="space-y-5">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h3 class="font-bold text-ink-900">Group memberships</h3>
+              <p class="text-sm text-ink-500">Member counts for every club league and user-created private league in this campaign.</p>
+            </div>
+            <button @click="loadNamedReport('groups')" :disabled="namedReportLoading" class="pill bg-ink-100 text-ink-700 hover:bg-ink-200 text-xs shrink-0">{{ namedReportLoading ? 'Loading...' : 'Refresh' }}</button>
+          </div>
+          <div v-if="namedReportError" class="card p-4 text-sm text-coral-600">{{ namedReportError }}</div>
+          <div v-if="namedReportLoading && !groupsReport" class="card h-40 animate-pulse bg-ink-100/40"></div>
+          <template v-else-if="groupsReport">
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div class="card p-4 text-center"><div class="text-2xl font-extrabold text-ink-900">{{ groupsReport.summary?.club_count ?? 0 }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Club leagues</div></div>
+              <div class="card p-4 text-center"><div class="text-2xl font-extrabold text-sky-600">{{ groupsReport.summary?.total_club_members ?? 0 }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">Club members</div></div>
+              <div class="card p-4 text-center"><div class="text-2xl font-extrabold text-mint-600">{{ groupsReport.summary?.user_group_count ?? 0 }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">User leagues</div></div>
+              <div class="card p-4 text-center"><div class="text-2xl font-extrabold text-coral-500">{{ groupsReport.summary?.total_user_group_members ?? 0 }}</div><div class="text-xs text-ink-500 font-semibold uppercase tracking-wider mt-1">User league members</div></div>
+            </div>
+
+            <div class="card p-4">
+              <div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider">Club leagues</div>
+                <button @click="exportGroupsCsv('clubs')" :disabled="!groupsReport.clubs?.length" class="pill bg-sky-100 text-sky-700 hover:bg-sky-200 text-xs">Export CSV</button>
+              </div>
+              <div v-if="!groupsReport.clubs?.length" class="text-sm text-ink-400">No club leagues yet.</div>
+              <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div v-for="c in groupsReport.clubs" :key="c.group_id" class="flex items-center justify-between gap-3 rounded-xl bg-ink-50/60 px-3 py-2">
+                  <div class="flex items-center gap-3 min-w-0">
+                    <img v-if="c.logo_url" :src="c.logo_url" alt="" class="w-6 h-6 object-contain shrink-0" />
+                    <span class="truncate text-sm font-semibold text-ink-800">{{ c.name }}</span>
+                  </div>
+                  <span class="text-sm font-extrabold text-ink-900 shrink-0">{{ c.members }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card p-4">
+              <div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider">User-created leagues</div>
+                <button @click="exportGroupsCsv('user')" :disabled="!groupsReport.user_groups?.length" class="pill bg-sky-100 text-sky-700 hover:bg-sky-200 text-xs">Export CSV</button>
+              </div>
+              <input v-model="groupSearch" type="text" placeholder="Search by league name, code or creator" class="input !py-2 mb-3" />
+              <div v-if="!filteredUserGroups.length" class="text-sm text-ink-400">No leagues match your search.</div>
+              <div v-else class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="text-left text-xs text-ink-500 uppercase tracking-wider border-b border-ink-100">
+                      <th class="py-2 pr-3">League</th>
+                      <th class="py-2 pr-3">Code</th>
+                      <th class="py-2 pr-3">Creator</th>
+                      <th class="py-2 pr-3 text-right">Members</th>
+                      <th class="py-2 text-right">Invites</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="g in filteredUserGroups" :key="g.group_id" class="border-b border-ink-50">
+                      <td class="py-2 pr-3 font-semibold text-ink-800"><span class="mr-1">{{ g.avatar_emoji }}</span>{{ g.name }}</td>
+                      <td class="py-2 pr-3 font-mono text-xs text-ink-500">{{ g.code }}</td>
+                      <td class="py-2 pr-3 text-ink-600">{{ g.creator || '—' }}</td>
+                      <td class="py-2 pr-3 text-right font-extrabold text-ink-900">{{ g.members }}</td>
+                      <td class="py-2 text-right text-ink-600">{{ g.invites_sent }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- MONTHLY REWARDS PANEL -->
+        <div v-if="reportPanel === 'rewards'" class="space-y-5">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h3 class="font-bold text-ink-900">Monthly rewards</h3>
+              <p class="text-sm text-ink-500">Private-league consistency and cumulative "Back A Team" value, plus top performers in each club league — for rewarding the best each month.</p>
+            </div>
+            <div class="flex items-end gap-2 shrink-0">
+              <div>
+                <label class="label !mb-1">Month</label>
+                <select v-model="rewardsMonth" @change="loadNamedReport('rewards')" :disabled="namedReportLoading" class="input !py-2 w-40">
+                  <option v-if="!rewardsReport" value="">Latest</option>
+                  <option v-for="m in (rewardsReport?.available_months || [])" :key="m" :value="m">{{ m }}</option>
+                </select>
+              </div>
+              <button @click="loadNamedReport('rewards')" :disabled="namedReportLoading" class="pill bg-ink-100 text-ink-700 hover:bg-ink-200 text-xs">{{ namedReportLoading ? 'Loading...' : 'Refresh' }}</button>
+            </div>
+          </div>
+          <div v-if="namedReportError" class="card p-4 text-sm text-coral-600">{{ namedReportError }}</div>
+          <div v-if="namedReportLoading && !rewardsReport" class="card h-40 animate-pulse bg-ink-100/40"></div>
+          <template v-else-if="rewardsReport">
+            <div class="card p-4 bg-sun-50 border border-sun-100 text-sm text-ink-600">
+              Consistency counts members who predicted <span class="font-semibold">every fixture of every gameweek</span> in
+              <span class="font-semibold">{{ rewardsReport.month }}</span><span v-if="rewardsReport.matchweeks_in_month?.length"> (gameweeks {{ rewardsReport.matchweeks_in_month.join(', ') }})</span>. Staff accounts are excluded.
+            </div>
+
+            <!-- Private league rewards -->
+            <div class="card p-4">
+              <div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider">Private league consistency &amp; backed value</div>
+                <button @click="exportRewardsPrivateCsv" :disabled="!rewardsReport.private_groups?.length" class="pill bg-sky-100 text-sky-700 hover:bg-sky-200 text-xs">Export CSV</button>
+              </div>
+              <div v-if="!rewardsReport.private_groups?.length" class="text-sm text-ink-400">No private-league activity for this month.</div>
+              <div v-else class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="text-left text-xs text-ink-500 uppercase tracking-wider border-b border-ink-100">
+                      <th class="py-2 pr-3">League</th>
+                      <th class="py-2 pr-3">Creator</th>
+                      <th class="py-2 pr-3 text-right">Members</th>
+                      <th class="py-2 pr-3 text-right">Consistent</th>
+                      <th class="py-2 pr-3 text-right">Consistency</th>
+                      <th class="py-2 text-right">Backed value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="g in rewardsReport.private_groups" :key="g.group_id" class="border-b border-ink-50">
+                      <td class="py-2 pr-3 font-semibold text-ink-800"><span class="mr-1">{{ g.avatar_emoji }}</span>{{ g.name }}</td>
+                      <td class="py-2 pr-3 text-ink-600">{{ g.creator || '—' }}</td>
+                      <td class="py-2 pr-3 text-right tabular-nums text-ink-700">{{ g.member_count }}</td>
+                      <td class="py-2 pr-3 text-right tabular-nums text-ink-700">{{ g.consistent_members }}</td>
+                      <td class="py-2 pr-3 text-right tabular-nums font-extrabold text-emerald-600">{{ g.consistency_rate_pct }}%</td>
+                      <td class="py-2 text-right tabular-nums font-bold text-teal-700">&#8358;{{ Number(g.cumulative_backed_value).toLocaleString() }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Club top performers -->
+            <div class="card p-4">
+              <div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
+                <div class="text-xs text-ink-500 font-semibold uppercase tracking-wider">Top performers by club league</div>
+                <button @click="exportRewardsClubsCsv" :disabled="!rewardsReport.club_top_performers?.some((c) => c.top_performers?.length)" class="pill bg-sky-100 text-sky-700 hover:bg-sky-200 text-xs">Export CSV</button>
+              </div>
+              <div v-if="!rewardsReport.club_top_performers?.some((c) => c.member_count > 0)" class="text-sm text-ink-400">No club-league members with activity this month.</div>
+              <div v-else class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <div v-for="c in rewardsReport.club_top_performers.filter((x) => x.member_count > 0)" :key="c.group_id" class="rounded-xl border border-ink-100 p-3">
+                  <div class="flex items-center gap-2 mb-2">
+                    <img v-if="c.logo_url" :src="c.logo_url" alt="" class="w-6 h-6 object-contain shrink-0" />
+                    <span class="font-bold text-ink-900">{{ c.name }}</span>
+                    <span class="text-xs text-ink-400">{{ c.member_count }} members</span>
+                  </div>
+                  <div v-if="!c.top_performers?.length" class="text-sm text-ink-400">No scored predictions yet.</div>
+                  <table v-else class="w-full text-sm">
+                    <tbody class="divide-y divide-ink-50">
+                      <tr v-for="p in c.top_performers" :key="p.rank">
+                        <td class="py-1.5 pr-2 font-bold text-ink-400 w-6">{{ p.rank }}</td>
+                        <td class="py-1.5 pr-2 font-semibold text-ink-800 truncate">{{ p.username || '—' }}</td>
+                        <td class="py-1.5 text-right tabular-nums font-extrabold text-ink-900">{{ p.points_month }} pts</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           </template>
         </div>

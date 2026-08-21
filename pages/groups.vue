@@ -2,6 +2,8 @@
 definePageMeta({ middleware: 'auth' })
 
 const supabase = useSupabase()
+const route = useRoute()
+const router = useRouter()
 const { user, trackPulseEvent } = useAuth()
 const { config: campaign, campaignId, load: loadCampaign } = useCampaign()
 
@@ -130,23 +132,19 @@ const createGroup = async () => {
   await loadMyGroups()
 }
 
-const joinGroup = async () => {
-  if (!user.value || !joinCode.value.trim()) return
-  joining.value = true
-  joinError.value = ''
+const performJoin = async (rawCode: string): Promise<{ groupId: string | null; error: string }> => {
+  if (!user.value || !campaignId.value) return { groupId: null, error: 'Something went wrong. Please try again.' }
+  const code = rawCode.trim().toUpperCase()
+  if (!code) return { groupId: null, error: 'Please enter an invite code.' }
 
   const { data: group } = await supabase
     .from('groups')
     .select('*')
-    .eq('code', joinCode.value.trim().toUpperCase())
+    .eq('code', code)
     .eq('campaign_id', campaignId.value)
     .maybeSingle()
 
-  if (!group) {
-    joinError.value = 'No group found with that code for this campaign.'
-    joining.value = false
-    return
-  }
+  if (!group) return { groupId: null, error: 'No group found with that code for this campaign.' }
 
   const { error } = await supabase.from('group_members').insert({
     group_id: group.id,
@@ -155,20 +153,60 @@ const joinGroup = async () => {
   })
 
   if (error) {
-    if (error.code === '23505') {
-      joinError.value = "You're already in this group."
-    } else {
-      joinError.value = 'Failed to join. Try again.'
-    }
+    // 23505 = already a member. Treat as success so an invite link simply opens
+    // the group instead of showing an error.
+    if (error.code === '23505') return { groupId: group.id, error: '' }
+    return { groupId: null, error: 'Failed to join. Please try again.' }
+  }
+
+  trackPulseEvent('group_joined', { group_id: group.id })
+  return { groupId: group.id, error: '' }
+}
+
+const openGroupById = async (groupId: string | null) => {
+  if (!groupId) return
+  const g = myGroups.value.find((x) => x.id === groupId)
+  if (g) await loadGroupMembers(g)
+}
+
+const joinGroup = async () => {
+  if (!user.value || !joinCode.value.trim()) return
+  joining.value = true
+  joinError.value = ''
+
+  const { groupId, error } = await performJoin(joinCode.value)
+  if (error) {
+    joinError.value = error
     joining.value = false
     return
   }
 
-  trackPulseEvent('group_joined', { group_id: group.id })
   joinCode.value = ''
   joining.value = false
   showJoin.value = false
   await loadMyGroups()
+  await openGroupById(groupId)
+}
+
+// Handle invite links of the form /groups?join=CODE. When signed in we join (or
+// just open the group if already a member); the auth middleware sends signed-out
+// visitors through login first and returns them here afterwards.
+const handleJoinLink = async () => {
+  const raw = route.query.join
+  const code = Array.isArray(raw) ? raw[0] : raw
+  if (typeof code !== 'string' || !code.trim()) return
+
+  await router.replace({ query: {} })
+
+  const { groupId, error } = await performJoin(code)
+  if (error) {
+    joinCode.value = code.trim().toUpperCase()
+    joinError.value = error
+    showJoin.value = true
+    return
+  }
+  await loadMyGroups()
+  await openGroupById(groupId)
 }
 
 const loadGroupMembers = async (group: Group) => {
@@ -219,11 +257,49 @@ const copyCode = async (code: string) => {
   await navigator.clipboard.writeText(code)
 }
 
+const recordInvite = async (group: Group, channel: string) => {
+  if (group.is_system) return
+  await supabase.from('group_invites').insert({
+    group_id: group.id,
+    campaign_id: group.campaign_id,
+    inviter_user_id: user.value?.id ?? null,
+    channel,
+  })
+  trackPulseEvent('group_invite_sent', { group_id: group.id, channel })
+}
+
 const copied = ref('')
 const handleCopyCode = async (code: string) => {
   await copyCode(code)
   copied.value = code
   setTimeout(() => (copied.value = ''), 2000)
+  if (selectedGroup.value && selectedGroup.value.code === code) {
+    await recordInvite(selectedGroup.value, 'code')
+  }
+}
+
+const handleCopyLink = async (group: Group) => {
+  await navigator.clipboard.writeText(inviteLink(group))
+  copied.value = `${group.code}:link`
+  setTimeout(() => (copied.value = ''), 2000)
+  await recordInvite(group, 'link')
+}
+
+const inviteLink = (group: Group) => {
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://play.sycamore.ng'
+  return `${origin}/groups?join=${group.code}`
+}
+
+const canNativeShare = computed(() => typeof navigator !== 'undefined' && !!(navigator as any).share)
+const shareInvite = async (group: Group) => {
+  const link = inviteLink(group)
+  const text = `Join my "${group.name}" league on Sycamore Play! Tap to join: ${link}`
+  try {
+    await (navigator as any).share({ title: 'Join my league', text, url: link })
+    await recordInvite(group, 'share')
+  } catch {
+    // user dismissed the share sheet; nothing to record
+  }
 }
 
 const displayMemberName = (m: GroupMember) => {
@@ -240,6 +316,7 @@ const userGroups = computed(() => myGroups.value.filter((g) => !g.is_system))
 onMounted(async () => {
   await loadCampaign()
   await loadMyGroups()
+  await handleJoinLink()
   trackPulseEvent('groups_viewed')
 })
 </script>
@@ -411,14 +488,29 @@ onMounted(async () => {
             <svg class="w-5 h-5 text-sky-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>
             <div class="flex-1 min-w-0">
               <div class="text-sm font-bold text-sky-800">Invite friends</div>
-              <div class="text-xs text-sky-600 mt-0.5">Share the code <span class="font-mono font-bold">{{ selectedGroup.code }}</span> to invite people to this group.</div>
+              <div class="text-xs text-sky-600 mt-0.5">Share the code <span class="font-mono font-bold">{{ selectedGroup.code }}</span> or send a one-tap join link.</div>
             </div>
-            <button
-              @click="handleCopyCode(selectedGroup!.code!)"
-              class="pill bg-sky-200 text-sky-800 hover:bg-sky-300 transition cursor-pointer font-bold"
-            >
-              {{ copied === selectedGroup!.code ? 'Copied!' : 'Copy code' }}
-            </button>
+            <div class="flex items-center gap-2 shrink-0">
+              <button
+                v-if="canNativeShare"
+                @click="shareInvite(selectedGroup!)"
+                class="pill bg-sky-600 text-white hover:bg-sky-700 transition cursor-pointer font-bold"
+              >
+                Share
+              </button>
+              <button
+                @click="handleCopyLink(selectedGroup!)"
+                class="pill bg-sky-600 text-white hover:bg-sky-700 transition cursor-pointer font-bold"
+              >
+                {{ copied === `${selectedGroup!.code}:link` ? 'Link copied!' : 'Copy link' }}
+              </button>
+              <button
+                @click="handleCopyCode(selectedGroup!.code!)"
+                class="pill bg-sky-200 text-sky-800 hover:bg-sky-300 transition cursor-pointer font-bold"
+              >
+                {{ copied === selectedGroup!.code ? 'Copied!' : 'Copy code' }}
+              </button>
+            </div>
           </div>
         </div>
       </div>

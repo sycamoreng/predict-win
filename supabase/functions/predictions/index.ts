@@ -1,10 +1,11 @@
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 import { pulseTrack } from "../_shared/pulse.ts";
+import { verifySession, readSessionToken, readAdminToken } from "../_shared/session.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, X-App-Token, X-App-Admin-Token",
 };
 
 const supabase = createClient(
@@ -577,23 +578,47 @@ Deno.serve(async (req: Request) => {
     const url = new URL(req.url);
     const route = url.pathname.split("/").pop();
     const body = await req.json().catch(() => ({}));
-    const email = (body.email || "").trim().toLowerCase();
-
-    if (!email) {
-      return new Response(JSON.stringify({ error: "Email required" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
 
     const ADMIN_ONLY_ROUTES = new Set([
       "submit-result", "set-status", "admins-list", "admins-upsert",
       "admins-remove", "teams-list", "team-eliminate", "me-admin",
       "generate-h2h",
     ]);
+    const isAdminRoute = ADMIN_ONLY_ROUTES.has(route || "");
+
+    // Identity comes from a signed token issued at login, never from the
+    // request body. This prevents a caller from impersonating another user.
+    const userClaims = await verifySession(readSessionToken(req));
+    const adminClaims = await verifySession(readAdminToken(req));
+
+    let email: string;
+    if (isAdminRoute) {
+      if (!adminClaims?.admin) {
+        return new Response(JSON.stringify({ error: "Admin sign-in required" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      email = (adminClaims.email || "").trim().toLowerCase();
+    } else {
+      if (!userClaims) {
+        return new Response(JSON.stringify({ error: "Sign-in required" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      email = (userClaims.email || "").trim().toLowerCase();
+    }
+
+    if (!email) {
+      return new Response(JSON.stringify({ error: "Sign-in required" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     let user: any = null;
-    if (!ADMIN_ONLY_ROUTES.has(route || "")) {
+    if (!isAdminRoute) {
       const { data } = await supabase
         .from("synced_users")
         .select("*, backed_team:teams!synced_users_backed_team_id_fkey(name, code)")

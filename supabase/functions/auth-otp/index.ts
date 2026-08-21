@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 import { pulseIdentify, pulseTrack } from "../_shared/pulse.ts";
+import { issueSession } from "../_shared/session.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -232,7 +233,8 @@ Deno.serve(async (req: Request) => {
           is_existing_sycamore_user: true,
         }).catch(() => {});
 
-        return new Response(JSON.stringify({ success: true, user: { ...user, is_guest: false } }), {
+        const sessionToken = await issueSession({ uid: user.id, email: user.email });
+        return new Response(JSON.stringify({ success: true, user: { ...user, is_guest: false }, session_token: sessionToken }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
@@ -253,6 +255,7 @@ Deno.serve(async (req: Request) => {
             qualifying_transactions_count: 0,
             total_points: 0,
             is_guest: true,
+            signup_source: "play",
           })
           .select("*, backed_team:teams!synced_users_backed_team_id_fkey(*)")
           .maybeSingle();
@@ -287,7 +290,8 @@ Deno.serve(async (req: Request) => {
         first_encounter: "predictor_app",
       }).catch(() => {});
 
-      return new Response(JSON.stringify({ success: true, user: { ...guestUser, is_guest: true } }), {
+      const guestSessionToken = await issueSession({ uid: guestUser.id, email: guestUser.email });
+      return new Response(JSON.stringify({ success: true, user: { ...guestUser, is_guest: true }, session_token: guestSessionToken }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -372,7 +376,14 @@ Deno.serve(async (req: Request) => {
         });
       }
 
-      return new Response(JSON.stringify({ success: true, admin: adminInfo }), {
+      const adminToken = await issueSession({
+        uid: `admin:${adminInfo.email}`,
+        email: adminInfo.email,
+        admin: true,
+        role: adminInfo.role,
+        perms: adminInfo.permissions,
+      });
+      return new Response(JSON.stringify({ success: true, admin: adminInfo, admin_token: adminToken }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

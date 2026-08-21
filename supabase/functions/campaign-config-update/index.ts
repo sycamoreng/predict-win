@@ -1,9 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+import { verifySession, readAdminToken } from "../_shared/session.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, X-App-Token, X-App-Admin-Token",
 };
 
 const supabase = createClient(
@@ -18,10 +19,12 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const { admin_email, fields, campaign_id } = body;
+    const { fields, campaign_id } = body;
+    const adminClaims = await verifySession(readAdminToken(req));
+    const admin_email = adminClaims?.admin ? adminClaims.email : "";
 
     if (!admin_email || !fields || typeof fields !== "object") {
-      return new Response(JSON.stringify({ error: "admin_email and fields required" }), {
+      return new Response(JSON.stringify({ error: "Admin sign-in and fields required" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });

@@ -1,10 +1,11 @@
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 import { pulseTrack } from "../_shared/pulse.ts";
+import { verifySession, readAdminToken } from "../_shared/session.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, X-App-Token, X-App-Admin-Token",
 };
 
 const supabase = createClient(
@@ -58,9 +59,9 @@ interface PendingEvent {
 const pendingEmails: EmailPayload[] = [];
 const pendingEvents: PendingEvent[] = [];
 
-function queueEvent(userId: string | null, eventName: string, properties: Record<string, unknown>, templateData?: Record<string, unknown>) {
+function queueEvent(userId: string | null, eventName: string, properties: Record<string, unknown>, templateData?: Record<string, unknown>, options?: { skipEmail?: boolean }) {
   const email = properties.email as string | undefined;
-  if (email) {
+  if (email && !options?.skipEmail) {
     pendingEmails.push({
       event_name: eventName,
       to_email: email,
@@ -110,17 +111,24 @@ async function flushEmails() {
   pendingEvents.length = 0;
 }
 
-async function refreshUserCounters(userId: string) {
-  const { data: rows } = await supabase
+// Recomputes a player's total from scratch every time so nothing gets wiped by a
+// later match: base = prediction points, plus streak-milestone and side-quest
+// bonuses read from their own tables. Writes campaign_participants (what the app
+// reads) and synced_users (legacy mirror).
+async function refreshUserCounters(userId: string, campaignId?: string | null) {
+  const cid = campaignId || null;
+  const predQuery = supabase
     .from("predictions")
     .select("points_awarded, predicted_home_score, predicted_away_score, wants_exact_score_pick, match:matches!predictions_match_id_fkey(home_score, away_score, status)")
     .eq("user_id", userId);
-  let total = 0;
+  if (cid) predQuery.eq("campaign_id", cid);
+  const { data: rows } = await predQuery;
+  let base = 0;
   let correct = 0;
   let exact = 0;
   for (const r of rows || []) {
     const pts = r.points_awarded || 0;
-    total += pts;
+    base += pts;
     if (pts > 0) correct++;
     const m = r.match as any;
     if (
@@ -131,6 +139,35 @@ async function refreshUserCounters(userId: string) {
       exact++;
     }
   }
+
+  let bonus = 0;
+  if (cid) {
+    const { data: claims } = await supabase
+      .from("streak_milestone_claims")
+      .select("milestone:streak_milestones!streak_milestone_claims_milestone_id_fkey(bonus_points)")
+      .eq("user_id", userId)
+      .eq("campaign_id", cid);
+    for (const c of claims || []) bonus += (c.milestone as any)?.bonus_points || 0;
+
+    const { data: questEntries } = await supabase
+      .from("side_quest_entries")
+      .select("points_awarded")
+      .eq("user_id", userId)
+      .eq("campaign_id", cid);
+    for (const e of questEntries || []) bonus += e.points_awarded || 0;
+  }
+
+  const total = base + bonus;
+
+  if (cid) {
+    await supabase.from("campaign_participants").update({
+      total_points: total,
+      correct_predictions_count: correct,
+      exact_scorelines_count: exact,
+      updated_at: new Date().toISOString(),
+    }).eq("user_id", userId).eq("campaign_id", cid);
+  }
+
   await supabase.from("synced_users").update({
     total_points: total,
     correct_predictions_count: correct,
@@ -365,18 +402,8 @@ async function updateStreaksAndMilestones(match: any, preds: any[]) {
             milestone_id: ms.id,
             campaign_id: campaignId,
           });
-
-          // Award bonus points to user total
-          const { data: userData } = await supabase
-            .from("synced_users")
-            .select("total_points")
-            .eq("id", userId)
-            .maybeSingle();
-
-          await supabase
-            .from("synced_users")
-            .update({ total_points: (userData?.total_points || 0) + ms.bonus_points, updated_at: new Date().toISOString() })
-            .eq("id", userId);
+          // The bonus lands in the player's total via refreshUserCounters, which
+          // sums all milestone claims — no manual increment here.
 
           // Send notification
           await supabase.from("notifications").insert({
@@ -551,7 +578,7 @@ async function rescoreMatch(matchId: string) {
       actualScore,
       predictedScore,
       predictLink: `${APP_BASE_URL}/predict`,
-    });
+    }, { skipEmail: true });
 
     pulseTrack(u?.email || p.user_id, finalPts > 0 ? "prediction_scored_correct" : "prediction_scored_incorrect", {
       user_id: p.user_id,
@@ -681,13 +708,14 @@ async function rescoreMatch(matchId: string) {
     }
   }
 
+  // Update streaks and record milestone claims first, so the counter refresh
+  // below picks up any freshly-earned bonus points.
+  await updateStreaksAndMilestones(match, preds);
+
   const userIds = [...new Set(preds.map((p) => p.user_id))];
   for (const uid of userIds) {
-    await refreshUserCounters(uid);
+    await refreshUserCounters(uid, match.campaign_id);
   }
-
-  // Update streaks and check milestone rewards
-  await updateStreaksAndMilestones(match, preds);
 
   // Auto-eliminate the loser in knockout stages
   const KNOCKOUT_STAGES = new Set(["round_of_16", "round_of_32", "quarter_final", "semi_final", "final"]);
@@ -1462,12 +1490,13 @@ Deno.serve(async (req: Request) => {
     const url = new URL(req.url);
     const route = url.pathname.split("/").pop();
     const body = await req.json().catch(() => ({}));
-    const email = (body.email || "").trim().toLowerCase();
+    const adminClaims = await verifySession(readAdminToken(req));
+    const email = (adminClaims?.admin ? adminClaims.email : "").trim().toLowerCase();
     const league = Number(body.league) || DEFAULT_LEAGUE;
     const season = Number(body.season) || DEFAULT_SEASON;
 
-    // Allow cron/service-role calls to sync without admin email
-    const isCron = isServiceRoleRequest(req) || (body.action === "update-scores" && !email);
+    // Only genuine service-role (cron) calls may sync without an admin token.
+    const isCron = isServiceRoleRequest(req);
     if (isCron) {
       const { updated, skipped, finished_fixtures } = await syncResults(league, season);
       if (updated.length > 0) {

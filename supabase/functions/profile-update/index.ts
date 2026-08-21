@@ -1,10 +1,11 @@
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 import { pulseTrack } from "../_shared/pulse.ts";
+import { verifySession, readSessionToken } from "../_shared/session.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, X-App-Token, X-App-Admin-Token",
 };
 
 const supabase = createClient(
@@ -19,16 +20,19 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const { user_id, email, username, social_handles } = body;
+    const { username, social_handles } = body;
+    const userClaims = await verifySession(readSessionToken(req));
 
-    if (!user_id || !email) {
-      return new Response(JSON.stringify({ error: "user_id and email required" }), {
-        status: 400,
+    if (!userClaims) {
+      return new Response(JSON.stringify({ error: "Sign-in required" }), {
+        status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    const user_id = userClaims.uid;
+    const email = userClaims.email;
 
-    // Verify user_id + email match in synced_users
+    // Confirm the identity in the token still maps to a real user row.
     const { data: existing } = await supabase
       .from("synced_users")
       .select("id, email")
@@ -37,7 +41,7 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     if (!existing) {
-      return new Response(JSON.stringify({ error: "User not found or email mismatch" }), {
+      return new Response(JSON.stringify({ error: "User not found" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });

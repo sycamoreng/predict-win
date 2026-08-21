@@ -8,7 +8,7 @@ const loading = ref(false)
 const error = ref('')
 const devCode = ref('')
 
-const { setAdminSession, admin } = useAuth()
+const { setAdminSession, setAdminToken, admin } = useAuth()
 const { call } = useFunctions()
 const router = useRouter()
 
@@ -46,6 +46,7 @@ const verifyOtp = async () => {
   try {
     const res = await call('auth-otp/admin-verify', { email: email.value, code: code.value })
     setAdminSession(res.admin)
+    setAdminToken(res.admin_token || null)
     await router.replace('/admin')
   } catch (e) {
     error.value = (e as Error).message

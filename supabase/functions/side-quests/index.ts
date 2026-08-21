@@ -1,9 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+import { verifySession, readSessionToken, readAdminToken } from "../_shared/session.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, X-App-Token, X-App-Admin-Token",
 };
 
 const supabase = createClient(
@@ -366,6 +367,7 @@ async function resolveMatchweekQuests(campaignId: string, matchweek: number) {
   if (!allCompleted) return { resolved: 0, message: "Not all matches completed yet" };
 
   let resolved = 0;
+  const affectedUsers = new Set<string>();
 
   for (const quest of quests) {
     let correctAnswer: string | null = null;
@@ -455,17 +457,9 @@ async function resolveMatchweekQuests(campaignId: string, matchweek: number) {
         .eq("id", entry.id);
 
       if (isCorrect && points > 0) {
-        // Award points to user total
-        const { data: userData } = await supabase
-          .from("synced_users")
-          .select("total_points")
-          .eq("id", entry.user_id)
-          .maybeSingle();
-
-        await supabase
-          .from("synced_users")
-          .update({ total_points: (userData?.total_points || 0) + points, updated_at: new Date().toISOString() })
-          .eq("id", entry.user_id);
+        // The bonus lands in the player's total via recomputeUserTotal below,
+        // which sums all side-quest entries — no manual increment here.
+        affectedUsers.add(entry.user_id);
 
         // Notify user
         await supabase.from("notifications").insert({
@@ -481,7 +475,67 @@ async function resolveMatchweekQuests(campaignId: string, matchweek: number) {
     resolved++;
   }
 
+  for (const uid of affectedUsers) {
+    await recomputeUserTotal(uid, campaignId);
+  }
+
   return { resolved };
+}
+
+// Recompute a player's authoritative total the same way the results scorer does:
+// base prediction points + streak-milestone bonuses + side-quest bonuses. Writes
+// campaign_participants (what the app reads) and synced_users (legacy mirror).
+async function recomputeUserTotal(userId: string, campaignId: string) {
+  const { data: rows } = await supabase
+    .from("predictions")
+    .select("points_awarded, predicted_home_score, predicted_away_score, wants_exact_score_pick, match:matches!predictions_match_id_fkey(home_score, away_score, status)")
+    .eq("user_id", userId)
+    .eq("campaign_id", campaignId);
+  let base = 0;
+  let correct = 0;
+  let exact = 0;
+  for (const r of rows || []) {
+    const pts = r.points_awarded || 0;
+    base += pts;
+    if (pts > 0) correct++;
+    const m = r.match as any;
+    if (
+      r.wants_exact_score_pick && m && m.status === "completed" &&
+      m.home_score === r.predicted_home_score &&
+      m.away_score === r.predicted_away_score
+    ) {
+      exact++;
+    }
+  }
+
+  let bonus = 0;
+  const { data: claims } = await supabase
+    .from("streak_milestone_claims")
+    .select("milestone:streak_milestones!streak_milestone_claims_milestone_id_fkey(bonus_points)")
+    .eq("user_id", userId)
+    .eq("campaign_id", campaignId);
+  for (const c of claims || []) bonus += (c.milestone as any)?.bonus_points || 0;
+
+  const { data: questEntries } = await supabase
+    .from("side_quest_entries")
+    .select("points_awarded")
+    .eq("user_id", userId)
+    .eq("campaign_id", campaignId);
+  for (const e of questEntries || []) bonus += e.points_awarded || 0;
+
+  const total = base + bonus;
+  await supabase.from("campaign_participants").update({
+    total_points: total,
+    correct_predictions_count: correct,
+    exact_scorelines_count: exact,
+    updated_at: new Date().toISOString(),
+  }).eq("user_id", userId).eq("campaign_id", campaignId);
+  await supabase.from("synced_users").update({
+    total_points: total,
+    correct_predictions_count: correct,
+    exact_scorelines_count: exact,
+    updated_at: new Date().toISOString(),
+  }).eq("id", userId);
 }
 
 async function getUserForEmail(email: string): Promise<string | null> {
@@ -503,8 +557,15 @@ Deno.serve(async (req: Request) => {
     const route = url.pathname.split("/").pop();
     const body = await req.json().catch(() => ({}));
 
+    // Identity comes from signed tokens, never the request body.
+    const adminClaims = await verifySession(readAdminToken(req));
+    const userClaims = await verifySession(readSessionToken(req));
+    const adminEmail = adminClaims?.admin ? adminClaims.email : "";
+    const isCron = isServiceRoleRequest(req);
+
     // Preview quests for a matchweek (admin review — builds but does NOT save)
     if (route === "preview") {
+      if (!adminEmail && !isCron) return forbidden();
       const campaign = await getActiveCampaign();
       if (!campaign) {
         return new Response(JSON.stringify({ error: "No active campaign" }), {
@@ -527,7 +588,7 @@ Deno.serve(async (req: Request) => {
 
     // Create a single custom quest (admin)
     if (route === "create") {
-      if (!(await isAdminEmail(body.admin_email))) return forbidden();
+      if (!(await isAdminEmail(adminEmail))) return forbidden();
       const campaign = await getActiveCampaign();
       if (!campaign) return badRequest("No active campaign");
       const q = body.quest || {};
@@ -562,7 +623,7 @@ Deno.serve(async (req: Request) => {
 
     // Publish a reviewed list of suggested quests (admin)
     if (route === "publish") {
-      if (!(await isAdminEmail(body.admin_email))) return forbidden();
+      if (!(await isAdminEmail(adminEmail))) return forbidden();
       const campaign = await getActiveCampaign();
       if (!campaign) return badRequest("No active campaign");
       const incoming = Array.isArray(body.quests) ? body.quests : [];
@@ -589,7 +650,7 @@ Deno.serve(async (req: Request) => {
 
     // Delete a quest and its entries (admin)
     if (route === "delete") {
-      if (!(await isAdminEmail(body.admin_email))) return forbidden();
+      if (!(await isAdminEmail(adminEmail))) return forbidden();
       const questId = body.quest_id;
       if (!questId) return badRequest("quest_id required");
       await supabase.from("side_quest_entries").delete().eq("quest_id", questId);
@@ -602,7 +663,7 @@ Deno.serve(async (req: Request) => {
 
     // Manually resolve a quest and score entries (admin)
     if (route === "resolve-manual") {
-      if (!(await isAdminEmail(body.admin_email))) return forbidden();
+      if (!(await isAdminEmail(adminEmail))) return forbidden();
       const questId = body.quest_id;
       const answer = body.answer;
       if (!questId || !answer) return badRequest("quest_id and answer required");
@@ -661,7 +722,7 @@ Deno.serve(async (req: Request) => {
 
     // List reusable quest templates (admin)
     if (route === "templates-list") {
-      if (!(await isAdminEmail(body.admin_email))) return forbidden();
+      if (!(await isAdminEmail(adminEmail))) return forbidden();
       const campaign = await getActiveCampaign();
       const { data, error } = await supabase
         .from("quest_templates")
@@ -677,7 +738,7 @@ Deno.serve(async (req: Request) => {
 
     // Create or update a reusable quest template (admin)
     if (route === "template-save") {
-      if (!(await isAdminEmail(body.admin_email))) return forbidden();
+      if (!(await isAdminEmail(adminEmail))) return forbidden();
       const campaign = await getActiveCampaign();
       const t = body.template || {};
       if (!t.title || !Array.isArray(t.options) || t.options.length < 2) {
@@ -709,7 +770,7 @@ Deno.serve(async (req: Request) => {
 
     // Delete a reusable quest template (admin)
     if (route === "template-delete") {
-      if (!(await isAdminEmail(body.admin_email))) return forbidden();
+      if (!(await isAdminEmail(adminEmail))) return forbidden();
       if (!body.template_id) return badRequest("template_id required");
       const { error } = await supabase.from("quest_templates").delete().eq("id", body.template_id);
       if (error) throw new Error(error.message);
@@ -720,6 +781,7 @@ Deno.serve(async (req: Request) => {
 
     // Generate quests (admin/cron only)
     if (route === "generate") {
+      if (!adminEmail && !isCron) return forbidden();
       const campaign = await getActiveCampaign();
       if (!campaign) {
         return new Response(JSON.stringify({ error: "No active campaign" }), {
@@ -742,13 +804,13 @@ Deno.serve(async (req: Request) => {
 
     // Submit entry (user)
     if (route === "submit") {
-      const email = (body.email || "").trim().toLowerCase();
-      if (!email) {
-        return new Response(JSON.stringify({ error: "email required" }), {
-          status: 400,
+      if (!userClaims) {
+        return new Response(JSON.stringify({ error: "Sign-in required" }), {
+          status: 401,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
+      const email = (userClaims.email || "").trim().toLowerCase();
       const userId = await getUserForEmail(email);
       if (!userId) {
         return new Response(JSON.stringify({ error: "User not found" }), {
@@ -764,6 +826,7 @@ Deno.serve(async (req: Request) => {
 
     // Resolve quests for a matchweek (admin/cron)
     if (route === "resolve") {
+      if (!adminEmail && !isCron) return forbidden();
       const campaign = await getActiveCampaign();
       if (!campaign) {
         return new Response(JSON.stringify({ error: "No active campaign" }), {
@@ -786,6 +849,7 @@ Deno.serve(async (req: Request) => {
 
     // Auto-generate (cron): determine next matchweek and generate quests
     if (route === "side-quests" && body.action === "auto-generate") {
+      if (!adminEmail && !isCron) return forbidden();
       const campaign = await getActiveCampaign();
       if (!campaign) {
         return new Response(JSON.stringify({ skipped: true, reason: "No active campaign" }), {

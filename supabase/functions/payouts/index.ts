@@ -1,9 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+import { verifySession, readAdminToken } from "../_shared/session.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, X-App-Token, X-App-Admin-Token",
 };
 
 const supabase = createClient(
@@ -181,7 +182,8 @@ Deno.serve(async (req: Request) => {
     const url = new URL(req.url);
     const route = url.pathname.split("/").pop();
     const body = await req.json().catch(() => ({}));
-    const email = (body.email || "").trim().toLowerCase();
+    const adminClaims = await verifySession(readAdminToken(req));
+    const email = (adminClaims?.admin ? adminClaims.email : "").trim().toLowerCase();
 
     if (!email || !(await adminHasPermission(email, "view_payouts"))) {
       return new Response(JSON.stringify({ error: "Not authorised." }), {

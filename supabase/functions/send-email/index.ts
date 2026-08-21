@@ -95,6 +95,14 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const authToken = (req.headers.get("Authorization") || "").replace("Bearer ", "");
+    if (authToken !== Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")) {
+      return new Response(JSON.stringify({ error: "Not authorised" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const body = await req.json();
 
     // Support batch sends: accept a single request or an array

@@ -12,14 +12,11 @@ const supabase = createClient(
 );
 
 async function getActiveCampaign() {
-  const { data, error } = await supabase
+  const { data } = await supabase
     .from("campaigns")
-    .select("id, name")
+    .select("id, name, prediction_lock_minutes")
     .eq("is_active", true)
-    .limit(1)
-    .single();
-
-  if (error || !data) return null;
+    .maybeSingle();
   return data;
 }
 
@@ -35,29 +32,34 @@ function deriveFirstName(name: string | null | undefined, username: string | nul
   return email.split("@")[0];
 }
 
-interface MatchWithTeams {
+const CHIP_NAMES: Record<string, string> = {
+  double_down: "Double Down",
+  triple_captain: "Triple Captain",
+  first_blood: "First Blood",
+  streak_shield: "Streak Shield",
+  last_stand: "Last Stand",
+  perfect_week: "Perfect Week",
+};
+const chipLabel = (t: string) => CHIP_NAMES[t] || t.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+const fmtKickoff = (iso: string) =>
+  new Date(iso).toLocaleString("en-NG", {
+    weekday: "short", day: "numeric", month: "short",
+    hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Africa/Lagos",
+  });
+
+const fmtLock = (kickoffIso: string, lockLeadMs: number) =>
+  new Date(new Date(kickoffIso).getTime() - lockLeadMs).toLocaleString("en-NG", {
+    weekday: "short", day: "numeric", month: "short",
+    hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Africa/Lagos",
+  });
+
+interface MatchRow {
   id: string;
+  matchweek: number | null;
   kickoff_at: string;
   home_team: { name: string; code: string };
   away_team: { name: string; code: string };
-}
-
-interface UserPrediction {
-  user_id: string;
-  predicted_home_score: number;
-  predicted_away_score: number;
-  predicted_winner_team_id: string | null;
-  predicted_first_to_score_team_id: string | null;
-  wants_winner_pick: boolean;
-  wants_first_to_score_pick: boolean;
-  wants_exact_score_pick: boolean;
-  match_id: string;
-  user: {
-    id: string;
-    email: string;
-    name: string;
-    username: string | null;
-  };
 }
 
 async function sendBatchEmails(emails: { event_name: string; to_email: string; dynamic_template_data: Record<string, unknown> }[]) {
@@ -74,35 +76,17 @@ async function sendBatchEmails(emails: { event_name: string; to_email: string; d
   } catch { /* best-effort */ }
 }
 
-function formatPredictionSummary(
-  pred: UserPrediction,
-  match: MatchWithTeams,
-): Record<string, string> {
-  const homeName = match.home_team.code;
-  const awayName = match.away_team.code;
-  return {
-    match: `${homeName} vs ${awayName}`,
-    predictedScore: `${pred.predicted_home_score}-${pred.predicted_away_score}`,
-    predictedWinner: pred.predicted_winner_team_id === match.id
-      ? "Draw"
-      : pred.predicted_winner_team_id
-        ? (pred.predicted_winner_team_id === match.home_team.code ? homeName : awayName)
-        : "N/A",
-  };
-}
-
-async function processReminderEmails() {
-  const campaign = await getActiveCampaign();
-  if (!campaign) return { reminder_matches: 0, reminder_emails: 0 };
-
+// "Locking soon" nudge: fires ~1 hour before predictions lock for the fixtures.
+async function processReminderEmails(campaign: { id: string }, lockLeadMs: number) {
   const now = Date.now();
-  const fourHoursMs = 4 * 60 * 60 * 1000;
-  const windowStart = new Date(now + fourHoursMs - 10 * 60 * 1000).toISOString();
-  const windowEnd = new Date(now + fourHoursMs + 10 * 60 * 1000).toISOString();
+  // 1 hour before lock == lockLeadMs + 1h before kickoff.
+  const leadMs = lockLeadMs + 60 * 60 * 1000;
+  const windowStart = new Date(now + leadMs - 10 * 60 * 1000).toISOString();
+  const windowEnd = new Date(now + leadMs + 10 * 60 * 1000).toISOString();
 
   const { data: matches } = await supabase
     .from("matches")
-    .select("id, kickoff_at, home_team:teams!matches_home_team_id_fkey(name, code), away_team:teams!matches_away_team_id_fkey(name, code)")
+    .select("id, matchweek, kickoff_at, home_team:teams!matches_home_team_id_fkey(name, code), away_team:teams!matches_away_team_id_fkey(name, code)")
     .eq("status", "scheduled")
     .eq("reminder_email_sent", false)
     .eq("campaign_id", campaign.id)
@@ -130,30 +114,41 @@ async function processReminderEmails() {
 
   const predictedSet = new Set((existingPreds || []).map((p) => `${p.user_id}:${p.match_id}`));
 
-  const emailBatch: { event_name: string; to_email: string; dynamic_template_data: Record<string, unknown> }[] = [];
+  // Group by (user, matchweek): one email per user per matchweek listing the
+  // fixtures that are about to lock and that they still have not predicted.
+  const groups = new Map<string, { user: { id: string; email: string; name: string | null; username: string | null }; matchweek: number; fixtures: Record<string, unknown>[] }>();
 
   for (const match of matches) {
-    const m = match as unknown as MatchWithTeams;
-    const kickoff = new Date(m.kickoff_at);
-    const lockDate = new Date(kickoff.getTime() - 3 * 60 * 60 * 1000);
-    const lockTime = lockDate.toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Africa/Lagos" });
-
+    const m = match as unknown as MatchRow;
+    const mw = m.matchweek ?? 0;
+    const fixture = {
+      teamA: m.home_team.code,
+      teamB: m.away_team.code,
+      homeTeam: m.home_team.name,
+      awayTeam: m.away_team.name,
+      kickoff: fmtKickoff(m.kickoff_at),
+      lockTime: fmtLock(m.kickoff_at, lockLeadMs),
+    };
     for (const user of allUsers) {
       if (predictedSet.has(`${user.id}:${m.id}`)) continue;
-
-      emailBatch.push({
-        event_name: "prediction_lock_1h",
-        to_email: user.email,
-        dynamic_template_data: {
-          firstName: deriveFirstName(user.name, user.username, user.email),
-          teamA: (match.home_team as any).code,
-          teamB: (match.away_team as any).code,
-          lockTime,
-          predictLink: `${APP_BASE_URL}/predict`,
-        },
-      });
+      const key = `${user.id}:${mw}`;
+      if (!groups.has(key)) groups.set(key, { user, matchweek: mw, fixtures: [] });
+      groups.get(key)!.fixtures.push(fixture);
     }
   }
+
+  const emailBatch = [...groups.values()].map(({ user, matchweek, fixtures }) => ({
+    event_name: "prediction_lock_1h",
+    to_email: user.email,
+    dynamic_template_data: {
+      firstName: deriveFirstName(user.name, user.username, user.email),
+      matchweek,
+      fixtures,
+      fixtureCount: fixtures.length,
+      matchCount: fixtures.length,
+      predictLink: `${APP_BASE_URL}/predict`,
+    },
+  }));
 
   for (let i = 0; i < emailBatch.length; i += 20) {
     await sendBatchEmails(emailBatch.slice(i, i + 20));
@@ -164,18 +159,15 @@ async function processReminderEmails() {
   return { reminder_matches: matches.length, reminder_emails: emailBatch.length };
 }
 
-async function processLockEmails() {
-  const campaign = await getActiveCampaign();
-  if (!campaign) return { lock_matches: 0, lock_emails: 0 };
-
+// "Locked" confirmation: fires at the moment predictions lock for the fixtures.
+async function processLockEmails(campaign: { id: string }, lockLeadMs: number) {
   const now = Date.now();
-  const threeHoursMs = 3 * 60 * 60 * 1000;
-  const windowStart = new Date(now + threeHoursMs - 10 * 60 * 1000).toISOString();
-  const windowEnd = new Date(now + threeHoursMs + 10 * 60 * 1000).toISOString();
+  const windowStart = new Date(now + lockLeadMs - 10 * 60 * 1000).toISOString();
+  const windowEnd = new Date(now + lockLeadMs + 10 * 60 * 1000).toISOString();
 
   const { data: matches } = await supabase
     .from("matches")
-    .select("id, kickoff_at, home_team:teams!matches_home_team_id_fkey(name, code), away_team:teams!matches_away_team_id_fkey(name, code)")
+    .select("id, matchweek, kickoff_at, home_team:teams!matches_home_team_id_fkey(name, code), away_team:teams!matches_away_team_id_fkey(name, code)")
     .eq("status", "scheduled")
     .eq("lock_email_sent", false)
     .eq("campaign_id", campaign.id)
@@ -188,7 +180,7 @@ async function processLockEmails() {
 
   const { data: predictions } = await supabase
     .from("predictions")
-    .select("*, user:synced_users!predictions_user_id_fkey(id, email, name, username)")
+    .select("user_id, match_id, predicted_home_score, predicted_away_score, user:synced_users!predictions_user_id_fkey(id, email, name, username)")
     .in("match_id", matchIds);
 
   if (!predictions || predictions.length === 0) {
@@ -196,45 +188,61 @@ async function processLockEmails() {
     return { lock_matches: matches.length, lock_emails: 0 };
   }
 
-  const matchMap = new Map<string, MatchWithTeams>();
-  for (const m of matches) {
-    matchMap.set(m.id, m as unknown as MatchWithTeams);
-  }
+  const matchMap = new Map<string, MatchRow>();
+  for (const m of matches) matchMap.set(m.id, m as unknown as MatchRow);
 
-  const userPredictions = new Map<string, { user: { email: string; name: string; username: string | null }; preds: { match: MatchWithTeams; pred: UserPrediction }[] }>();
+  // Group by (user, matchweek): one confirmation per user per matchweek.
+  const groups = new Map<string, { userId: string; user: { email: string; name: string | null; username: string | null }; matchweek: number; matches: Record<string, string>[] }>();
 
   for (const p of predictions) {
     const u = p.user as any;
     if (!u?.email) continue;
-    if (!userPredictions.has(u.id)) {
-      userPredictions.set(u.id, { user: u, preds: [] });
-    }
     const match = matchMap.get(p.match_id);
-    if (match) {
-      userPredictions.get(u.id)!.preds.push({ match, pred: p as UserPrediction });
+    if (!match) continue;
+    const mw = match.matchweek ?? 0;
+    const key = `${u.id}:${mw}`;
+    if (!groups.has(key)) groups.set(key, { userId: u.id, user: u, matchweek: mw, matches: [] });
+    groups.get(key)!.matches.push({
+      teamA: match.home_team.code,
+      teamB: match.away_team.code,
+      predictedScore: `${p.predicted_home_score}-${p.predicted_away_score}`,
+    });
+  }
+
+  // One chip is allowed per user per matchweek. Look up which chip (if any)
+  // each user has active for the matchweeks in this batch so the confirmation
+  // can tell them whether they played one.
+  const userIds = [...new Set([...groups.values()].map((g) => g.userId))];
+  const matchweeks = [...new Set([...groups.values()].map((g) => g.matchweek))];
+  const chipByUserWeek = new Map<string, string>();
+  if (userIds.length > 0 && matchweeks.length > 0) {
+    const { data: chips } = await supabase
+      .from("chip_activations")
+      .select("user_id, chip_type, week_number")
+      .eq("campaign_id", campaign.id)
+      .in("user_id", userIds)
+      .in("week_number", matchweeks);
+    for (const c of chips || []) {
+      chipByUserWeek.set(`${c.user_id}:${c.week_number}`, c.chip_type);
     }
   }
 
-  const emailBatch: { event_name: string; to_email: string; dynamic_template_data: Record<string, unknown> }[] = [];
-
-  for (const [, { user, preds }] of userPredictions) {
-    const matchSummaries = preds.map(({ match, pred }) => ({
-      teamA: match.home_team.code,
-      teamB: match.away_team.code,
-      predictedScore: `${pred.predicted_home_score}-${pred.predicted_away_score}`,
-    }));
-
-    emailBatch.push({
+  const emailBatch = [...groups.values()].map(({ userId, user, matchweek, matches: matchSummaries }) => {
+    const chipType = chipByUserWeek.get(`${userId}:${matchweek}`) || null;
+    return {
       event_name: "prediction_locked",
       to_email: user.email,
       dynamic_template_data: {
         firstName: deriveFirstName(user.name, user.username, user.email),
+        matchweek,
         matches: matchSummaries,
         matchCount: matchSummaries.length,
+        chipUsed: chipType !== null,
+        chipName: chipType ? chipLabel(chipType) : "",
         historyLink: `${APP_BASE_URL}/history`,
       },
-    });
-  }
+    };
+  });
 
   await sendBatchEmails(emailBatch);
   await supabase.from("matches").update({ lock_email_sent: true }).in("id", matchIds);
@@ -247,16 +255,27 @@ Deno.serve(async (req: Request) => {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
+  const authToken = (req.headers.get("Authorization") || "").replace("Bearer ", "");
+  if (authToken !== Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   try {
-    const reminderResult = await processReminderEmails();
-    const lockResult = await processLockEmails();
+    const campaign = await getActiveCampaign();
+    if (!campaign) {
+      return new Response(JSON.stringify({ success: true, message: "No active campaign" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const lockLeadMs = (campaign.prediction_lock_minutes ?? 60) * 60 * 1000;
+    const reminderResult = await processReminderEmails(campaign, lockLeadMs);
+    const lockResult = await processLockEmails(campaign, lockLeadMs);
 
     return new Response(
-      JSON.stringify({
-        success: true,
-        ...reminderResult,
-        ...lockResult,
-      }),
+      JSON.stringify({ success: true, ...reminderResult, ...lockResult }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {

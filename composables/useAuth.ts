@@ -142,6 +142,18 @@ export const useAuth = () => {
     }
   }
 
+  const setSessionToken = (token: string | null) => {
+    if (!import.meta.client) return
+    if (token) localStorage.setItem(APP_TOKEN_KEY, token)
+    else localStorage.removeItem(APP_TOKEN_KEY)
+  }
+
+  const setAdminToken = (token: string | null) => {
+    if (!import.meta.client) return
+    if (token) localStorage.setItem(APP_ADMIN_TOKEN_KEY, token)
+    else localStorage.removeItem(APP_ADMIN_TOKEN_KEY)
+  }
+
   const setAdminSession = (a: AdminInfo | null) => {
     admin.value = a
     if (!import.meta.client) return
@@ -229,16 +241,16 @@ export const useAuth = () => {
 
   const refreshUser = async () => {
     if (!user.value) return
-    const supabase = useSupabase()
 
-    const query = user.value.is_guest
-      ? supabase.from('synced_users').select('*').eq('email', user.value.email)
-      : supabase.from('synced_users').select('*').eq('id', user.value.id)
-
-    const { data } = await query.maybeSingle()
-    if (data) {
-      user.value = data as SessionUser
-      if (import.meta.client) localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+    try {
+      const { call } = useFunctions()
+      const { user: data } = await call('profile-me', {})
+      if (data) {
+        user.value = data as SessionUser
+        if (import.meta.client) localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+      }
+    } catch {
+      // Keep the cached session if the refresh could not complete.
     }
 
     const { config } = useCampaign()
@@ -253,6 +265,7 @@ export const useAuth = () => {
   const logout = () => {
     resetPulse()
     setSession(null)
+    setSessionToken(null)
     participation.value = null
     streak.value = null
     chipCount.value = 0
@@ -260,6 +273,7 @@ export const useAuth = () => {
 
   const adminLogout = () => {
     setAdminSession(null)
+    setAdminToken(null)
   }
 
   return {
@@ -270,7 +284,7 @@ export const useAuth = () => {
     campaignBackedTeamWins, campaignBackedTeamLockedAt,
     campaignCorrectPredictions, campaignExactScorelines,
     campaignCurrentStreak, campaignLongestStreak, campaignChipsUsed,
-    setSession, setAdminSession, loadFromStorage, loadParticipation, joinCampaign,
+    setSession, setSessionToken, setAdminSession, setAdminToken, loadFromStorage, loadParticipation, joinCampaign,
     refreshUser, logout, adminLogout, hasPermission, trackPulseEvent,
   }
 }

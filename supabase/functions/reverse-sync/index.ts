@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+import { verifySession, readAdminToken } from "../_shared/session.ts";
 
 /**
  * Reverse-sync: predictor → core platform
@@ -19,8 +20,13 @@ import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, X-App-Token, X-App-Admin-Token",
 };
+
+function isServiceRoleRequest(req: Request): boolean {
+  const token = (req.headers.get("Authorization") || "").replace("Bearer ", "");
+  return token === Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+}
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -59,6 +65,14 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const adminClaims = await verifySession(readAdminToken(req));
+    if (!adminClaims?.admin && !isServiceRoleRequest(req)) {
+      return new Response(JSON.stringify({ error: "Not authorised" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const body = await req.json().catch(() => ({}));
     const url = new URL(req.url);
     const route = url.pathname.split("/").pop();

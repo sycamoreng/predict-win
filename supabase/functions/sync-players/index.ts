@@ -1,11 +1,17 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { verifySession, readAdminToken } from "../_shared/session.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, X-App-Token, X-App-Admin-Token",
 };
+
+function isServiceRoleRequest(req: Request): boolean {
+  const token = (req.headers.get("Authorization") || "").replace("Bearer ", "");
+  return token === Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+}
 
 const API_BASE = "https://v3.football.api-sports.io";
 
@@ -32,6 +38,14 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const adminClaims = await verifySession(readAdminToken(req));
+    if (!adminClaims?.admin && !isServiceRoleRequest(req)) {
+      return new Response(JSON.stringify({ error: "Not authorised" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const body = await req.json().catch(() => ({}));
     const campaignId: string | undefined = body.campaign_id;
     const force: boolean = body.force === true;

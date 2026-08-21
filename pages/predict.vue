@@ -307,17 +307,26 @@ const canActivateDoubleDown = computed(() => {
   return true
 })
 
+const chipFetchHeaders = (): Record<string, string> => {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+    Apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+  }
+  if (import.meta.client) {
+    const token = localStorage.getItem(APP_TOKEN_KEY)
+    if (token) headers['x-app-token'] = token
+  }
+  return headers
+}
+
 const activateDoubleDown = async () => {
   if (!canActivateDoubleDown.value || !campaignId.value) return
   activatingChip.value = true
   try {
     const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/predictions/activate-chip`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        Apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-      },
+      headers: chipFetchHeaders(),
       body: JSON.stringify({
         email: user.value?.email,
         chip_type: 'double_down',
@@ -357,11 +366,7 @@ const activateTripleCaptain = async (matchId: string) => {
   try {
     const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/predictions/activate-chip`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        Apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-      },
+      headers: chipFetchHeaders(),
       body: JSON.stringify({
         email: user.value?.email,
         chip_type: 'triple_captain',
@@ -386,11 +391,7 @@ const cancelChip = async () => {
     const chip = chipActiveThisWeek.value
     const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/predictions/cancel-chip`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        Apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-      },
+      headers: chipFetchHeaders(),
       body: JSON.stringify({
         email: user.value?.email,
         campaign_id: campaignId.value,
@@ -521,11 +522,7 @@ const activateNewChip = async (chipType: string) => {
   try {
     const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/predictions/activate-chip`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        Apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-      },
+      headers: chipFetchHeaders(),
       body: JSON.stringify({
         email: user.value?.email,
         chip_type: chipType,

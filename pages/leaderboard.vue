@@ -219,14 +219,14 @@ const showShareRank = ref(false)
 const rankShareText = computed(() => {
   if (!myRank.value || !user.value) return ''
   const pts = mode.value === 'week' ? myWeekPoints.value : campaignPoints.value
-  const label = mode.value === 'week' ? 'this week' : 'overall'
+  const label = mode.value === 'week' ? 'this gameweek' : 'overall'
   return `I'm ranked #${myRank.value} with ${pts} points ${label} on the Sycamore Predictor League! Can you beat me?\n\n#SycamorePredictor`
 })
 
 const rankImageProps = computed(() => {
   if (!myRank.value || !user.value) return undefined
   const pts = mode.value === 'week' ? myWeekPoints.value : campaignPoints.value
-  const label = mode.value === 'week' ? `Week ${weekNumber.value} leaderboard` : 'Overall leaderboard'
+  const label = mode.value === 'week' ? `Gameweek ${weekNumber.value} leaderboard` : 'Overall leaderboard'
   return {
     variant: 'rank' as const,
     username: user.value.username || user.value.email?.split('@')[0] || 'player',
@@ -344,7 +344,7 @@ onMounted(() => {
           <div>
             <h1 class="text-3xl font-extrabold text-ink-900">Leaderboard</h1>
             <p class="mt-1 text-ink-500">
-              {{ mode === 'week' ? 'Weekly standings — resets every week.' : 'All-time standings — counts towards the grand prize.' }}
+              {{ mode === 'week' ? 'Gameweek standings — reset each gameweek.' : 'All-time standings — counts towards the grand prize.' }}
             </p>
           </div>
           <div v-if="user" class="card px-4 py-3 flex items-center gap-4">
@@ -356,7 +356,7 @@ onMounted(() => {
             </div>
             <div class="w-px h-10 bg-ink-100"></div>
             <div>
-              <div class="text-xs uppercase tracking-wider font-semibold text-ink-400">{{ mode === 'week' ? 'Week pts' : 'Total pts' }}</div>
+              <div class="text-xs uppercase tracking-wider font-semibold text-ink-400">{{ mode === 'week' ? 'GW pts' : 'Total pts' }}</div>
               <div class="text-2xl font-extrabold text-mint-600">{{ mode === 'week' ? myWeekPoints : campaignPoints }}</div>
             </div>
             <div class="w-px h-10 bg-ink-100"></div>
@@ -381,7 +381,7 @@ onMounted(() => {
                 mode === 'week' ? 'bg-sky-600 text-white shadow-pop' : 'text-ink-600 hover:bg-ink-100',
               ]"
             >
-              This Week
+              This Gameweek
             </button>
             <button
               @click="switchMode('overall')"
@@ -408,7 +408,7 @@ onMounted(() => {
           <div v-if="mode === 'week' && weekStart" class="flex items-center gap-2 bg-sky-50 border border-sky-100 rounded-xl px-4 py-2.5">
             <svg class="w-4 h-4 text-sky-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
             <div class="text-sm">
-              <span class="font-bold text-sky-700">Week {{ weekNumber }}</span>
+              <span class="font-bold text-sky-700">Gameweek {{ weekNumber }}</span>
               <span class="text-sky-600 mx-1.5">|</span>
               <span class="font-semibold text-sky-600">{{ formatWeekDate(weekStart) }}</span>
               <span class="text-sky-400 mx-1"> - </span>
@@ -422,9 +422,9 @@ onMounted(() => {
           <div class="w-12 h-12 rounded-xl bg-sky-100 mx-auto grid place-items-center mb-3">
             <svg class="w-6 h-6 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
           </div>
-          <h3 class="font-bold text-sky-800 text-lg">Fresh week, fresh start!</h3>
+          <h3 class="font-bold text-sky-800 text-lg">New gameweek, fresh start!</h3>
           <p class="text-sm text-sky-600 mt-1 max-w-md mx-auto">
-            A new week has started! Make your predictions to climb this week's rankings.
+            A new gameweek has started! Make your predictions to climb this gameweek's rankings.
           </p>
           <NuxtLink to="/predict" class="btn-primary px-6 py-2.5 text-sm inline-block mt-4">
             Make predictions
@@ -466,7 +466,7 @@ onMounted(() => {
         <div class="card overflow-hidden">
           <div class="px-4 sm:px-6 py-3 border-b border-ink-100 flex items-center justify-between">
             <h2 class="font-bold text-ink-900">
-              {{ activeTab === 'staff' ? 'Staff Standings' : mode === 'week' ? 'This Week' : 'All-Time Standings' }}
+              {{ activeTab === 'staff' ? 'Staff Standings' : mode === 'week' ? 'This Gameweek' : 'All-Time Standings' }}
             </h2>
             <span class="text-xs text-ink-400">{{ currentPlayers.length }} players</span>
           </div>

@@ -1,9 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+import { verifySession, readAdminToken } from "../_shared/session.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, X-App-Token, X-App-Admin-Token",
 };
 
 const supabase = createClient(
@@ -37,10 +38,12 @@ Deno.serve(async (req: Request) => {
     const url = new URL(req.url);
     const route = url.pathname.replace(/^\/reports\/?/, "");
     const body = await req.json().catch(() => ({}));
-    const { admin_email, campaign_id, matchweek } = body ?? {};
+    const { campaign_id, matchweek, month } = body ?? {};
+    const adminClaims = await verifySession(readAdminToken(req));
+    const admin_email = adminClaims?.admin ? adminClaims.email : "";
 
     if (!admin_email) {
-      return json({ error: "admin_email required" }, 400);
+      return json({ error: "Admin sign-in required" }, 401);
     }
 
     const { data: adminUser } = await supabase
@@ -54,13 +57,15 @@ Deno.serve(async (req: Request) => {
     }
 
     if (route === "daily-signups") {
-      const { data, error } = await supabase.rpc("get_daily_signups");
+      const cid = await resolveCampaignId(campaign_id);
+      const { data, error } = await supabase.rpc("get_daily_signups", { p_campaign_id: cid });
       if (error) return json({ error: error.message }, 500);
       return json({ rows: data ?? [] });
     }
 
     if (route === "daily-predictions") {
-      const { data, error } = await supabase.rpc("get_daily_predictions");
+      const cid = await resolveCampaignId(campaign_id);
+      const { data, error } = await supabase.rpc("get_daily_predictions", { p_campaign_id: cid });
       if (error) return json({ error: error.message }, 500);
       return json({ rows: data ?? [] });
     }
@@ -85,6 +90,14 @@ Deno.serve(async (req: Request) => {
       participation: { fn: "report_participation", args: { p_campaign_id: activeCampaign } },
       savings: { fn: "report_savings", args: { p_campaign_id: activeCampaign } },
       leagues: { fn: "report_leagues", args: { p_campaign_id: activeCampaign } },
+      groups: { fn: "report_groups", args: { p_campaign_id: activeCampaign } },
+      "monthly-rewards": {
+        fn: "report_monthly_rewards",
+        args: {
+          p_campaign_id: activeCampaign,
+          p_month: month === undefined || month === null || month === "" ? null : String(month),
+        },
+      },
       audit: {
         fn: "report_audit",
         args: {

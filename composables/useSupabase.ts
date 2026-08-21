@@ -10,16 +10,25 @@ export const useSupabase = () => {
   return client
 }
 
+export const APP_TOKEN_KEY = 'predictor_session_token'
+export const APP_ADMIN_TOKEN_KEY = 'predictor_admin_token'
+
 export const useFunctions = () => {
   const config = useRuntimeConfig()
   const baseUrl = `${config.public.supabaseUrl}/functions/v1`
-  const headers = {
-    Authorization: `Bearer ${config.public.supabaseAnonKey}`,
-    'Content-Type': 'application/json',
-  }
 
   return {
     async call(path: string, body: Record<string, unknown>) {
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${config.public.supabaseAnonKey}`,
+        'Content-Type': 'application/json',
+      }
+      if (import.meta.client) {
+        const sessionToken = localStorage.getItem(APP_TOKEN_KEY)
+        if (sessionToken) headers['x-app-token'] = sessionToken
+        const adminToken = localStorage.getItem(APP_ADMIN_TOKEN_KEY)
+        if (adminToken) headers['x-app-admin-token'] = adminToken
+      }
       const res = await fetch(`${baseUrl}/${path}`, {
         method: 'POST',
         headers,

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 const router = useRouter()
+const route = useRoute()
 const { config: campaign, load: loadCampaign, isLive } = useCampaign()
-const { setSession, loadParticipation, trackPulseEvent } = useAuth()
+const { setSession, setSessionToken, loadParticipation, trackPulseEvent } = useAuth()
 const loading = ref(true)
 
 definePageMeta({ layout: false })
@@ -17,6 +18,7 @@ const submitting = ref(false)
 const error = ref('')
 const devCode = ref('')
 const isNewUser = ref(false)
+const acceptedTerms = ref(false)
 
 const supabase = useSupabase()
 const kickoff = ref<string | null>(null)
@@ -69,6 +71,10 @@ const requestOtp = async () => {
     error.value = 'Please enter your email address.'
     return
   }
+  if (!acceptedTerms.value) {
+    error.value = 'Please accept the Terms & Conditions to continue.'
+    return
+  }
   submitting.value = true
   try {
     const res = await fetch(`${supabaseUrl}/functions/v1/auth-otp/request`, {
@@ -117,18 +123,30 @@ const verifyOtp = async () => {
       return
     }
     setSession(data.user)
+    setSessionToken(data.session_token || null)
     trackPulseEvent('signed_in', { method: 'otp', is_guest: !!data.user.is_guest })
 
     if (campaign.value.id && data.user.id) {
       await loadParticipation(campaign.value.id)
     }
 
-    router.push(isNewUser.value ? '/team' : '/predict')
+    router.push(safeRedirect() || (isNewUser.value ? '/team' : '/predict'))
   } catch {
     error.value = 'Could not verify. Please check your internet and try again.'
   } finally {
     submitting.value = false
   }
+}
+
+// Only ever redirect to an internal path (leading single slash), never to an
+// external URL — guards against open-redirect abuse of the invite links.
+const safeRedirect = (): string | null => {
+  const r = route.query.redirect
+  const path = Array.isArray(r) ? r[0] : r
+  if (typeof path === 'string' && path.startsWith('/') && !path.startsWith('//')) {
+    return path
+  }
+  return null
 }
 
 const goBack = () => {
@@ -397,9 +415,24 @@ const handleCodeInput = (event: Event) => {
                 </div>
               </Transition>
 
+              <!-- Terms & Conditions acceptance -->
+              <label for="accept-terms" class="flex items-start gap-2.5 cursor-pointer select-none">
+                <input
+                  id="accept-terms"
+                  v-model="acceptedTerms"
+                  type="checkbox"
+                  :disabled="submitting"
+                  class="mt-0.5 h-4 w-4 shrink-0 rounded border-ink-300 text-sky-600 focus:ring-sky-500 cursor-pointer"
+                />
+                <span class="text-xs text-ink-500 leading-relaxed">
+                  I have read and accept the
+                  <NuxtLink to="/terms" class="font-semibold text-sky-600 hover:text-sky-700 underline underline-offset-2">Terms &amp; Conditions</NuxtLink>.
+                </span>
+              </label>
+
               <button
                 type="submit"
-                :disabled="submitting || !email.trim()"
+                :disabled="submitting || !email.trim() || !acceptedTerms"
                 class="btn-primary w-full text-sm h-12"
               >
                 <svg v-if="submitting" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
