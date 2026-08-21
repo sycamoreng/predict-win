@@ -55,6 +55,7 @@ export type AdminPermission =
   | 'manage_fixtures'
   | 'view_payouts'
   | 'manage_admins'
+  | 'view_users'
 
 interface AdminInfo {
   email: string
@@ -204,7 +205,7 @@ export const useAuth = () => {
     const supabase = useSupabase()
     const { data } = await supabase
       .from('campaign_participants')
-      .select('*, backed_team:teams!campaign_participants_backed_team_id_fkey(*)')
+      .select('id, campaign_id, user_id, total_points, correct_predictions_count, exact_scorelines_count, backed_team_id, backed_team_wins, backed_team_locked_at, joined_at, backed_team:teams!campaign_participants_backed_team_id_fkey(*)')
       .eq('campaign_id', campaignId)
       .eq('user_id', user.value.id)
       .maybeSingle()

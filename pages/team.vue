@@ -24,41 +24,16 @@ const showUsernamePrompt = ref(false)
 const showSavingsModal = ref(false)
 const showSavingsTerms = ref(false)
 const savingsAmount = ref(1000)
-const savingsDuration = ref(30)
 const savingsConsent = ref(false)
 const savingsTermsAccepted = ref(false)
 const savingsLoading = ref(false)
 const savingsError = ref('')
 
-const amountOptions = [1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000]
-const durationOptions = computed(() =>
-  savingsAmount.value >= 100000
-    ? [
-        { value: 90, label: '3 months' },
-        { value: 180, label: '6 months' },
-        { value: 270, label: '9 months' },
-      ]
-    : [{ value: 30, label: '30 days' }]
-)
-watch(savingsAmount, (amt) => {
-  if (amt >= 100000) {
-    if (![90, 180, 270].includes(savingsDuration.value)) savingsDuration.value = 90
-  } else {
-    savingsDuration.value = 30
-  }
-})
-const formatDuration = (days: number | null | undefined) => {
-  if (!days) return '—'
-  if (days >= 90 && days % 30 === 0) {
-    const months = days / 30
-    return `${months} month${months === 1 ? '' : 's'}`
-  }
-  return `${days} days`
-}
+const amountOptions = [1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000]
+const MATURITY_DATE = '31 May 2027'
 
 const savingsEnabled = computed(() => !!(participation.value as any)?.auto_savings_enabled)
 const savingsCurrentAmount = computed(() => (participation.value as any)?.auto_savings_amount || 0)
-const savingsCurrentDuration = computed(() => (participation.value as any)?.auto_savings_duration || 0)
 
 const load = async () => {
   loading.value = true
@@ -143,9 +118,8 @@ const enableAutoSavings = async () => {
       email: user.value.email,
       enabled: true,
       amount: savingsAmount.value,
-      duration: savingsDuration.value,
     })
-    trackPulseEvent('auto_savings_enabled', { amount: savingsAmount.value, duration: savingsDuration.value })
+    trackPulseEvent('auto_savings_enabled', { amount: savingsAmount.value })
     await refreshUser()
     showSavingsModal.value = false
     savingsConsent.value = false
@@ -324,8 +298,8 @@ const backedTeamWins = computed(() => campaignBackedTeamWins.value)
             <div class="font-bold text-ink-900">₦{{ savingsCurrentAmount.toLocaleString() }}</div>
           </div>
           <div>
-            <div class="text-ink-500 text-xs font-semibold uppercase">Lock Period</div>
-            <div class="font-bold text-ink-900">{{ formatDuration(savingsCurrentDuration) }}</div>
+            <div class="text-ink-500 text-xs font-semibold uppercase">Matures</div>
+            <div class="font-bold text-ink-900">{{ MATURITY_DATE }}</div>
           </div>
           <div>
             <div class="text-ink-500 text-xs font-semibold uppercase">Plan Name</div>
@@ -461,8 +435,8 @@ const backedTeamWins = computed(() => campaignBackedTeamWins.value)
 
             <div class="space-y-3">
               <div class="p-3 rounded-xl bg-ink-50">
-                <p class="font-bold text-ink-900 text-xs uppercase tracking-wider mb-1">Lock Period</p>
-                <p>All savings created through this feature are subject to a <strong>minimum 10-day lock period</strong>. During this time, you cannot withdraw or access the saved funds. Amounts below ₦100,000 are locked for 30 days; amounts of ₦100,000 and above are locked for your chosen term of 3, 6 or 9 months.</p>
+                <p class="font-bold text-ink-900 text-xs uppercase tracking-wider mb-1">Savings Term</p>
+                <p>Your savings plan runs for the season and <strong>matures on {{ MATURITY_DATE }}</strong>, when the full balance is available to withdraw or move within the app. You are not locked in until then: each amount you save carries only a <strong>10-day lockout</strong>, after which you are free to withdraw that money at any time.</p>
               </div>
 
               <div class="p-3 rounded-xl bg-ink-50">
@@ -472,7 +446,7 @@ const backedTeamWins = computed(() => campaignBackedTeamWins.value)
 
               <div class="p-3 rounded-xl bg-ink-50">
                 <p class="font-bold text-ink-900 text-xs uppercase tracking-wider mb-1">Early Withdrawal</p>
-                <p>You may request an early withdrawal after the 10-day minimum lock period. Early withdrawals before your chosen duration may forfeit accrued interest. Standard Sycamore withdrawal policies apply.</p>
+                <p>Each saved amount is available to withdraw once its 10-day lockout has passed. Standard Sycamore withdrawal policies apply.</p>
               </div>
 
               <div class="p-3 rounded-xl bg-ink-50">
@@ -530,15 +504,10 @@ const backedTeamWins = computed(() => campaignBackedTeamWins.value)
               <select v-model.number="savingsAmount" class="input">
                 <option v-for="amt in amountOptions" :key="amt" :value="amt">₦{{ amt.toLocaleString() }}</option>
               </select>
+              <p class="mt-1 text-xs text-ink-500">Choose anywhere from ₦1,000 up to ₦1,000,000 per win.</p>
             </div>
-            <div>
-              <label class="label">Lock period</label>
-              <select v-model.number="savingsDuration" class="input">
-                <option v-for="opt in durationOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-              </select>
-              <p class="mt-1 text-xs text-ink-500">
-                {{ savingsAmount >= 100000 ? 'Amounts of ₦100,000 and above let you choose a 3 to 9 month lock.' : 'Amounts below ₦100,000 are locked for 30 days.' }}
-              </p>
+            <div class="p-3 rounded-xl bg-ink-50 text-xs text-ink-600 leading-relaxed">
+              Your plan matures on <span class="font-semibold">{{ MATURITY_DATE }}</span>. Each amount you save is free to withdraw after a 10-day lockout.
             </div>
             <div class="text-xs text-ink-500">
               Plan name: <span class="font-semibold">{{ campaign.name }} — {{ backedTeamName }}</span>
@@ -549,7 +518,7 @@ const backedTeamWins = computed(() => campaignBackedTeamWins.value)
             <p>By ticking the box below, you authorise Sycamore to:</p>
             <ul class="list-disc pl-4 space-y-1">
               <li>Automatically move ₦{{ savingsAmount.toLocaleString() }} from your account into savings each time your team wins.</li>
-              <li>Lock those funds for {{ durationOptions.find(o => o.value === savingsDuration)?.label || (savingsDuration + ' days') }} in a plan named "{{ campaign.name }} — {{ backedTeamName }}".</li>
+              <li>Lock those funds in a plan named "{{ campaign.name }} — {{ backedTeamName }}", maturing on {{ MATURITY_DATE }} and withdrawable after a 10-day lockout.</li>
             </ul>
             <p>If your account doesn't have enough, we'll simply skip that win -- nothing happens and you're not charged. This is optional, and you can turn it off anytime in your team settings.</p>
           </div>

@@ -2,7 +2,7 @@
 definePageMeta({ middleware: 'auth' })
 
 const supabase = useSupabase()
-const { user, isGuest, hasAccount, isStaff, isEnrolled, joinCampaign, refreshUser, trackPulseEvent, campaignPoints } = useAuth()
+const { user, isGuest, hasAccount, isEnrolled, joinCampaign, refreshUser, trackPulseEvent, campaignPoints } = useAuth()
 const { campaignId } = useCampaign()
 const { config: campaign, load: loadCampaign } = useCampaign()
 
@@ -11,10 +11,7 @@ const mode = ref<LeaderboardMode>('week')
 
 const players = ref<any[]>([])
 const weeklyPlayers = ref<any[]>([])
-const staffPlayers = ref<any[]>([])
-const staffPlayersOverall = ref<any[]>([])
 const loading = ref(true)
-const activeTab = ref<'public' | 'staff'>('public')
 const streaks = ref<Record<string, number>>({})
 
 const joining = ref(false)
@@ -53,7 +50,7 @@ const loadOverall = async () => {
   if (!campaignId.value) return
   const { data } = await supabase
     .from('campaign_participants')
-    .select('id, user_id, total_points, correct_predictions_count, exact_scorelines_count, backed_team:teams!campaign_participants_backed_team_id_fkey(flag_emoji, code, logo_url), user:synced_users!campaign_participants_user_id_fkey(id, name, username, email, active_customer_flag, is_account_valid, is_staff)')
+    .select('id, user_id, total_points, correct_predictions_count, exact_scorelines_count, backed_team:teams!campaign_participants_backed_team_id_fkey(flag_emoji, code, logo_url), user:synced_users!campaign_participants_user_id_fkey(id, name, username, active_customer_flag, is_account_valid, is_staff)')
     .eq('campaign_id', campaignId.value)
     .order('total_points', { ascending: false })
     .order('exact_scorelines_count', { ascending: false })
@@ -64,8 +61,6 @@ const loadOverall = async () => {
     id: p.user.id,
     name: p.user.name,
     username: p.user.username,
-    email: p.user.email,
-    is_staff: p.user.is_staff,
     total_points: p.total_points,
     exact_scorelines_count: p.exact_scorelines_count,
     correct_predictions_count: p.correct_predictions_count,
@@ -89,54 +84,11 @@ const loadWeekly = async () => {
   }))
 }
 
-const loadStaff = async () => {
-  if (!isStaff.value) return
-  const { data } = await supabase
-    .from('weekly_leaderboard')
-    .select('*')
-    .eq('is_staff', true)
-    .order('rank', { ascending: true })
-    .limit(50)
-  staffPlayers.value = (data || []).map((p: any) => ({
-    ...p,
-    id: p.user_id,
-    total_points: p.week_points,
-  }))
-}
-
-const loadStaffOverall = async () => {
-  if (!isStaff.value || !campaignId.value) return
-  const { data } = await supabase
-    .from('campaign_participants')
-    .select('id, user_id, total_points, correct_predictions_count, exact_scorelines_count, backed_team:teams!campaign_participants_backed_team_id_fkey(flag_emoji, code, logo_url), user:synced_users!campaign_participants_user_id_fkey(id, name, username, email, is_staff)')
-    .eq('campaign_id', campaignId.value)
-    .order('total_points', { ascending: false })
-    .order('exact_scorelines_count', { ascending: false })
-    .order('correct_predictions_count', { ascending: false })
-    .limit(100)
-  staffPlayersOverall.value = (data || []).filter((p: any) => p.user?.is_staff).map((p: any) => ({
-    id: p.user.id,
-    name: p.user.name,
-    username: p.user.username,
-    email: p.user.email,
-    is_staff: true,
-    total_points: p.total_points,
-    exact_scorelines_count: p.exact_scorelines_count,
-    correct_predictions_count: p.correct_predictions_count,
-    backed_team: p.backed_team,
-  })).slice(0, 50)
-}
-
 const tournamentEnded = computed(() => campaign.value.campaign_ended === true)
 
 const overallChampion = computed(() => {
   if (!tournamentEnded.value || players.value.length === 0) return null
   return players.value[0]
-})
-
-const staffChampion = computed(() => {
-  if (!tournamentEnded.value || !isStaff.value || staffPlayersOverall.value.length === 0) return null
-  return staffPlayersOverall.value[0]
 })
 
 const load = async () => {
@@ -147,7 +99,7 @@ const load = async () => {
     return
   }
   loading.value = true
-  await Promise.all([loadWeekBounds(), loadOverall(), loadWeekly(), loadStaff(), loadStaffOverall()])
+  await Promise.all([loadWeekBounds(), loadOverall(), loadWeekly()])
   // Load streaks for all players
   if (campaignId.value) {
     const { data: streakData } = await supabase.from('user_streaks').select('user_id, current_streak').eq('campaign_id', campaignId.value).gte('current_streak', 3)
@@ -159,9 +111,6 @@ const load = async () => {
 }
 
 const currentPlayers = computed(() => {
-  if (activeTab.value === 'staff') {
-    return mode.value === 'week' ? staffPlayers.value : staffPlayersOverall.value
-  }
   return mode.value === 'week' ? weeklyPlayers.value : players.value
 })
 
@@ -175,7 +124,6 @@ const myRank = computed(() => {
 const myWeekPoints = computed(() => {
   if (!user.value) return 0
   const entry = weeklyPlayers.value.find((p) => p.id === user.value!.id)
-    || staffPlayers.value.find((p) => p.id === user.value!.id)
   return entry?.week_points || entry?.total_points || 0
 })
 
@@ -235,11 +183,6 @@ const rankImageProps = computed(() => {
     rankLabel: label,
   }
 })
-
-const switchTab = (tab: 'public' | 'staff') => {
-  activeTab.value = tab
-  trackPulseEvent('leaderboard_tab_switched', { tab })
-}
 
 const switchMode = (m: LeaderboardMode) => {
   mode.value = m
@@ -330,12 +273,6 @@ onMounted(() => {
           :current-user-id="user?.id"
           label="Overall Champion"
         />
-        <LeaderboardCelebration
-          v-if="staffChampion"
-          :champion="staffChampion"
-          :current-user-id="user?.id"
-          label="Staff Champion"
-        />
       </template>
 
       <!-- Header with mode toggle -->
@@ -391,16 +328,6 @@ onMounted(() => {
               ]"
             >
               Overall
-            </button>
-            <button
-              v-if="isStaff"
-              @click="switchTab(activeTab === 'staff' ? 'public' : 'staff')"
-              :class="[
-                'px-4 py-2 rounded-lg text-sm font-semibold transition',
-                activeTab === 'staff' ? 'bg-ink-700 text-white shadow-pop' : 'text-ink-600 hover:bg-ink-100',
-              ]"
-            >
-              Staff
             </button>
           </div>
 
@@ -466,7 +393,7 @@ onMounted(() => {
         <div class="card overflow-hidden">
           <div class="px-4 sm:px-6 py-3 border-b border-ink-100 flex items-center justify-between">
             <h2 class="font-bold text-ink-900">
-              {{ activeTab === 'staff' ? 'Staff Standings' : mode === 'week' ? 'This Gameweek' : 'All-Time Standings' }}
+              {{ mode === 'week' ? 'This Gameweek' : 'All-Time Standings' }}
             </h2>
             <span class="text-xs text-ink-400">{{ currentPlayers.length }} players</span>
           </div>

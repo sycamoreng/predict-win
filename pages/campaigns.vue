@@ -23,7 +23,7 @@ const loadData = async () => {
       .order('created_at', { ascending: false })
     const { data: myParticipations } = await supabase
       .from('campaign_participants')
-      .select('*, campaign:campaigns(*), backed_team:teams!campaign_participants_backed_team_id_fkey(name, flag_emoji, code)')
+      .select('id, campaign_id, user_id, total_points, correct_predictions_count, exact_scorelines_count, backed_team_id, backed_team_wins, backed_team_locked_at, joined_at, campaign:campaigns(*), backed_team:teams!campaign_participants_backed_team_id_fkey(name, flag_emoji, code)')
       .eq('user_id', user.value.id)
       .order('joined_at', { ascending: false })
 

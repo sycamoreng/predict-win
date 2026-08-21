@@ -74,13 +74,14 @@ async function logEvent(userId: string | null, eventName: string, properties: Re
   });
 }
 
-type AdminPermission = "manage_results" | "manage_fixtures" | "view_payouts" | "manage_admins";
+type AdminPermission = "manage_results" | "manage_fixtures" | "view_payouts" | "manage_admins" | "view_users";
 
 const ROLE_PERMISSIONS: Record<string, AdminPermission[]> = {
-  super_admin: ["manage_results", "manage_fixtures", "view_payouts", "manage_admins"],
+  super_admin: ["manage_results", "manage_fixtures", "view_payouts", "manage_admins", "view_users"],
   results: ["manage_results"],
   fixtures: ["manage_fixtures"],
   payouts: ["view_payouts"],
+  support: ["view_users"],
 };
 
 async function adminHasPermission(email: string, permission: AdminPermission): Promise<boolean> {
@@ -1236,24 +1237,15 @@ Deno.serve(async (req: Request) => {
     }
 
     if (route === "auto-savings") {
-      const { enabled, amount, duration } = body;
-      const validAmounts = [1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000];
+      const { enabled, amount } = body;
+      const validAmounts = [1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000];
+      const LOCKOUT_DAYS = 10;
 
       if (enabled) {
         const amt = Number(amount);
-        const dur = Number(duration);
         if (!validAmounts.includes(amt)) {
           return new Response(
             JSON.stringify({ error: "Please choose a valid savings amount." }),
-            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-          );
-        }
-        // Lock period rule: amounts below 100,000 are fixed at 30 days;
-        // amounts of 100,000 and above choose 3, 6 or 9 months (in days).
-        const allowedDurations = amt >= 100000 ? [90, 180, 270] : [30];
-        if (!allowedDurations.includes(dur)) {
-          return new Response(
-            JSON.stringify({ error: "Invalid lock period for the selected amount." }),
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
           );
         }
@@ -1271,7 +1263,7 @@ Deno.serve(async (req: Request) => {
       };
       if (enabled) {
         payload.auto_savings_amount = Number(amount);
-        payload.auto_savings_duration = Number(duration);
+        payload.auto_savings_duration = LOCKOUT_DAYS;
         payload.auto_savings_consented_at = new Date().toISOString();
       } else {
         payload.auto_savings_amount = null;
@@ -1308,7 +1300,7 @@ Deno.serve(async (req: Request) => {
         email: user.email,
         auto_savings_enabled: !!enabled,
         auto_savings_amount: enabled ? Number(amount) : null,
-        auto_savings_duration: enabled ? Number(duration) : null,
+        auto_savings_duration: enabled ? LOCKOUT_DAYS : null,
         backed_team_id: user.backed_team_id || null,
         backed_team_name: backedTeamName || null,
         account_number: user.account_number || null,
@@ -1320,7 +1312,7 @@ Deno.serve(async (req: Request) => {
         name: user.name || "",
         team_name: backedTeamName,
         amount: enabled ? Number(amount) : null,
-        duration: enabled ? Number(duration) : null,
+        duration: enabled ? LOCKOUT_DAYS : null,
         backed_team_id: user.backed_team_id,
       }, enabled ? {
         firstName: deriveFirstName(user.name, user.username, user.email),

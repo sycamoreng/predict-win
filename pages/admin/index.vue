@@ -9,6 +9,7 @@ const canManageResults = computed(() => hasPermission('manage_results'))
 const canManageFixtures = computed(() => hasPermission('manage_fixtures'))
 const canViewPayouts = computed(() => hasPermission('view_payouts'))
 const canManageAdmins = computed(() => hasPermission('manage_admins'))
+const canViewUsers = computed(() => hasPermission('view_users'))
 
 type Tab = 'campaign' | 'fixtures' | 'results' | 'payouts' | 'teams' | 'users' | 'reports' | 'admins' | 'quests'
 
@@ -18,8 +19,8 @@ const tabs = computed<Array<{ key: Tab; label: string; show: boolean }>>(() => [
   { key: 'results', label: 'Results', show: canManageResults.value },
   { key: 'payouts', label: 'Payouts', show: canViewPayouts.value },
   { key: 'teams', label: 'Teams', show: canManageResults.value },
-  { key: 'users', label: 'Users', show: true },
-  { key: 'reports', label: 'Reports', show: true },
+  { key: 'users', label: 'Users', show: canViewUsers.value },
+  { key: 'reports', label: 'Reports', show: canViewUsers.value },
   { key: 'quests', label: 'Side Quests', show: true },
   { key: 'admins', label: 'Admins', show: canManageAdmins.value },
 ])
@@ -1208,14 +1209,15 @@ const adminsList = ref<any[]>([])
 const adminLoading = ref(false)
 const newAdminEmail = ref('')
 const newAdminName = ref('')
-const newAdminRole = ref<'super_admin' | 'results' | 'fixtures' | 'payouts'>('results')
+const newAdminRole = ref<'super_admin' | 'results' | 'fixtures' | 'payouts' | 'support'>('results')
 const adminError = ref('')
 
-const availableRoles: Array<{ value: 'super_admin' | 'results' | 'fixtures' | 'payouts'; label: string; description: string }> = [
+const availableRoles: Array<{ value: 'super_admin' | 'results' | 'fixtures' | 'payouts' | 'support'; label: string; description: string }> = [
   { value: 'super_admin', label: 'Super admin', description: 'Full access to all admin features.' },
   { value: 'results', label: 'Results manager', description: 'Submit and edit match results, change match status.' },
   { value: 'fixtures', label: 'Fixtures manager', description: 'Search competitions, sync results, import fixtures.' },
   { value: 'payouts', label: 'Payouts viewer', description: 'View and export weekly payout reports.' },
+  { value: 'support', label: 'Support', description: 'View and search the user directory and reports.' },
 ]
 
 const loadAdmins = async () => {
@@ -3138,8 +3140,8 @@ watch(activeTab, (tab) => {
               <input v-model="userDateTo" type="date" class="input !py-2" />
             </div>
             <div>
-              <label class="label !mb-1">Email search</label>
-              <input v-model="userSearchEmail" type="text" class="input !py-2" placeholder="e.g. @gmail.com" />
+              <label class="label !mb-1">Email or username search</label>
+              <input v-model="userSearchEmail" type="text" class="input !py-2" placeholder="e.g. @gmail.com or johnd" />
             </div>
           </div>
 
@@ -3187,6 +3189,7 @@ watch(activeTab, (tab) => {
               <thead class="bg-ink-50 text-ink-500 text-xs uppercase sticky top-0">
                 <tr>
                   <th class="text-left px-3 py-2">Email</th>
+                  <th class="text-left px-3 py-2">Username</th>
                   <th class="text-left px-3 py-2">Name</th>
                   <th class="text-left px-3 py-2">Account</th>
                   <th class="text-center px-3 py-2">Active</th>
@@ -3197,6 +3200,7 @@ watch(activeTab, (tab) => {
               <tbody class="divide-y divide-ink-100">
                 <tr v-for="u in usersPreview" :key="u.id" class="hover:bg-ink-50/50">
                   <td class="px-3 py-2 font-mono text-xs text-ink-700 max-w-[200px] truncate">{{ u.email }}</td>
+                  <td class="px-3 py-2 text-xs text-ink-700 max-w-[140px] truncate">{{ u.username || '-' }}</td>
                   <td class="px-3 py-2 text-xs font-semibold text-ink-900 max-w-[140px] truncate">{{ u.name || u.username || '-' }}</td>
                   <td class="px-3 py-2 font-mono text-xs text-ink-600">{{ u.account_number || '-' }}</td>
                   <td class="px-3 py-2 text-center">

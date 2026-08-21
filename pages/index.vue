@@ -125,6 +125,8 @@ const features = [
   },
 ]
 
+const WHATSAPP_COMMUNITY_URL = 'https://chat.whatsapp.com/IwD5XwS1PSB0sa6OQak50y'
+
 const trustPoints = [
   { icon: 'shield', text: 'Free to play' },
   { icon: 'lock', text: 'Secure platform' },
@@ -714,7 +716,7 @@ const modes = [
               <p class="text-[11px] text-ink-400 font-medium">3 uses per season</p>
             </div>
           </div>
-          <p class="text-sm text-ink-600 leading-relaxed">If your first prediction of the matchweek is correct, a <span class="font-bold text-red-500">1.5x bonus</span> carries across all remaining matches that week.</p>
+          <p class="text-sm text-ink-600 leading-relaxed">Your first prediction is your pick for the matchweek's earliest kickoff. If you call that match's result correctly so it earns points, a <span class="font-bold text-red-500">1.5x bonus</span> carries across all your remaining matches that week.</p>
         </div>
 
         <!-- Streak Shield -->
@@ -746,7 +748,7 @@ const modes = [
               <p class="text-[11px] text-ink-400 font-medium">1 use per season</p>
             </div>
           </div>
-          <p class="text-sm text-ink-600 leading-relaxed">Get every prediction in the matchweek right and earn a <span class="font-bold text-violet-600">+50 bonus points</span> on top. High risk, massive reward.</p>
+          <p class="text-sm text-ink-600 leading-relaxed">Getting every prediction right means every match you predict that week earns points &mdash; you call the result of each one correctly. Pull it off and earn a <span class="font-bold text-violet-600">+50 bonus points</span> on top. High risk, massive reward.</p>
         </div>
 
         <!-- Last Stand -->
@@ -967,6 +969,60 @@ const modes = [
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
               <span class="text-sm font-semibold text-ink-600 whitespace-nowrap">{{ point.text }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================ -->
+    <!-- COMMUNITY                                    -->
+    <!-- ============================================ -->
+    <section class="bg-gradient-to-b from-ink-50 to-white">
+      <div class="max-w-5xl mx-auto px-4 sm:px-6 py-20 sm:py-28">
+        <div class="text-center mb-12 sm:mb-14">
+          <div class="pill bg-emerald-100 text-emerald-700 mb-4 mx-auto">Community</div>
+          <h2 class="text-3xl sm:text-4xl font-extrabold text-ink-900 tracking-tight">Join the conversation</h2>
+          <p class="mt-3 text-ink-500 text-base sm:text-lg max-w-lg mx-auto leading-relaxed">
+            Predicting is more fun together. Trade tips, share your wins, and settle the banter with fellow players.
+          </p>
+        </div>
+
+        <div class="grid sm:grid-cols-2 gap-5 lg:gap-6">
+          <!-- WhatsApp community -->
+          <a
+            :href="WHATSAPP_COMMUNITY_URL"
+            target="_blank"
+            rel="noreferrer"
+            class="card group relative overflow-hidden p-6 sm:p-8 flex items-center gap-5 hover:shadow-lg hover:-translate-y-1 transition-all duration-300"
+          >
+            <div class="w-14 h-14 rounded-2xl bg-emerald-500 grid place-items-center shrink-0 shadow-soft">
+              <svg class="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51l-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.71.306 1.263.489 1.694.625.712.227 1.36.195 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <h3 class="text-lg font-extrabold text-ink-900 group-hover:text-emerald-700 transition">WhatsApp community</h3>
+                <span class="pill bg-emerald-100 text-emerald-700 text-[10px] font-bold">Live</span>
+              </div>
+              <p class="text-sm text-ink-500 leading-relaxed mt-1">Chat with other players, share tips and banter throughout the season.</p>
+              <span class="inline-flex items-center gap-1.5 text-sm font-bold text-emerald-600 mt-3">
+                Join the group
+                <svg class="w-4 h-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
+              </span>
+            </div>
+          </a>
+
+          <!-- FPL group placeholder -->
+          <div class="card relative overflow-hidden p-6 sm:p-8 flex items-center gap-5 opacity-90">
+            <div class="w-14 h-14 rounded-2xl bg-ink-200 grid place-items-center shrink-0">
+              <svg class="w-7 h-7 text-ink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <h3 class="text-lg font-extrabold text-ink-900">Fantasy Premier League group</h3>
+                <span class="pill bg-ink-100 text-ink-500 text-[10px] font-bold">Coming soon</span>
+              </div>
+              <p class="text-sm text-ink-500 leading-relaxed mt-1">Our official FPL mini-league is on the way. Check back soon for the join details.</p>
             </div>
           </div>
         </div>

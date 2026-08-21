@@ -66,6 +66,14 @@ async function predictionCountsFor(userIds: string[]): Promise<Record<string, nu
   return counts;
 }
 
+const ROLE_PERMISSIONS: Record<string, string[]> = {
+  super_admin: ["manage_results", "manage_fixtures", "view_payouts", "manage_admins", "view_users"],
+  results: ["manage_results"],
+  fixtures: ["manage_fixtures"],
+  payouts: ["view_payouts"],
+  support: ["view_users"],
+};
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -78,10 +86,13 @@ Deno.serve(async (req: Request) => {
 
     const { data: adminUser } = await supabase
       .from("admin_users")
-      .select("email")
+      .select("role")
       .eq("email", String(admin_email).trim().toLowerCase())
       .maybeSingle();
     if (!adminUser) return json({ error: "Not authorised" }, 403);
+    if (!(ROLE_PERMISSIONS[adminUser.role] || []).includes("view_users")) {
+      return json({ error: "Not authorised" }, 403);
+    }
 
     const body = await req.json().catch(() => ({}));
     const mode = String(body?.mode || "");
@@ -236,7 +247,10 @@ Deno.serve(async (req: Request) => {
       const buildFilters = (q: any) => {
         q = applyUserFilter(q, filter);
         q = withDate(q, range);
-        if (search) q = q.ilike("email", `%${search}%`);
+        if (search) {
+          const safe = search.replace(/[(),*]/g, "");
+          q = q.or(`email.ilike.%${safe}%,username.ilike.%${safe}%`);
+        }
         return q;
       };
 

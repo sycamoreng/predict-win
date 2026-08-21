@@ -5,7 +5,7 @@ import { issueSession } from "../_shared/session.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, X-App-Token, X-App-Admin-Token",
 };
 
 const supabase = createClient(
@@ -27,13 +27,14 @@ async function getTemplateId(eventName: string): Promise<string | null> {
   return data.sendgrid_template_id;
 }
 
-type AdminPermission = "manage_results" | "manage_fixtures" | "view_payouts" | "manage_admins";
+type AdminPermission = "manage_results" | "manage_fixtures" | "view_payouts" | "manage_admins" | "view_users";
 
 const ROLE_PERMISSIONS: Record<string, AdminPermission[]> = {
-  super_admin: ["manage_results", "manage_fixtures", "view_payouts", "manage_admins"],
+  super_admin: ["manage_results", "manage_fixtures", "view_payouts", "manage_admins", "view_users"],
   results: ["manage_results"],
   fixtures: ["manage_fixtures"],
   payouts: ["view_payouts"],
+  support: ["view_users"],
 };
 
 function generateCode(): string {

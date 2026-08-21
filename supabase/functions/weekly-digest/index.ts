@@ -72,6 +72,26 @@ async function getCurrentMatchweek(campaignId: string): Promise<number | null> {
   return first?.matchweek ?? null;
 }
 
+// A matchweek is "done" once at least one of its fixtures has finished and none
+// are still awaiting a result (postponed/cancelled fixtures do not block it).
+async function isMatchweekComplete(campaignId: string, matchweek: number): Promise<boolean> {
+  const { count: completedCount } = await supabase
+    .from("matches")
+    .select("id", { count: "exact", head: true })
+    .eq("campaign_id", campaignId)
+    .eq("matchweek", matchweek)
+    .eq("status", "completed");
+  if (!completedCount || completedCount === 0) return false;
+
+  const { count: pendingCount } = await supabase
+    .from("matches")
+    .select("id", { count: "exact", head: true })
+    .eq("campaign_id", campaignId)
+    .eq("matchweek", matchweek)
+    .not("status", "in", "(completed,postponed,cancelled)");
+  return (pendingCount ?? 0) === 0;
+}
+
 async function computeMatchweekPoints(matchweek: number, campaignId: string): Promise<Map<string, number>> {
   const { data: matches } = await supabase
     .from("matches")
@@ -231,6 +251,28 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    // Scheduled runs only send once the matchweek has fully finished, and never
+    // twice for the same matchweek. Test sends bypass both guards.
+    if (!testEmail) {
+      const complete = await isMatchweekComplete(campaign.id, currentMatchweek);
+      if (!complete) {
+        return new Response(JSON.stringify({ success: true, message: "Matchweek not complete yet", gameweek: currentMatchweek, sent: 0 }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const { data: alreadySent } = await supabase
+        .from("weekly_digest_sends")
+        .select("id")
+        .eq("campaign_id", campaign.id)
+        .eq("matchweek", currentMatchweek)
+        .maybeSingle();
+      if (alreadySent) {
+        return new Response(JSON.stringify({ success: true, message: "Digest already sent for this matchweek", gameweek: currentMatchweek, sent: 0 }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
     const { data: participants } = await supabase
       .from("campaign_participants")
       .select("user_id, total_points, user:synced_users!campaign_participants_user_id_fkey(id, email, name, username)")
@@ -239,6 +281,7 @@ Deno.serve(async (req: Request) => {
       .order("total_points", { ascending: false });
 
     if ((!participants || participants.length === 0) && !testEmail) {
+      await supabase.from("weekly_digest_sends").insert({ campaign_id: campaign.id, matchweek: currentMatchweek });
       return new Response(JSON.stringify({ success: true, message: "No users with points", sent: 0 }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -353,6 +396,8 @@ Deno.serve(async (req: Request) => {
       await sendEmail("weekly_leaderboard", user.email, user.name || "", buildData(user));
       sent++;
     }
+
+    await supabase.from("weekly_digest_sends").insert({ campaign_id: campaign.id, matchweek: currentMatchweek });
 
     return new Response(JSON.stringify({
       success: true,

@@ -66,11 +66,11 @@ const sections = [
     items: [
       {
         q: 'How does the automated "Back Your Club" savings plan work?',
-        a: 'The "Back Your Club" feature is an automated micro-savings nudge designed to turn football milestones into structured savings. During setup, you select the club you\u2019re backing for the season and authorize a fixed deduction amount from your primary wallet. Every time your selected club secures an official match victory, our systems automatically move that designated amount from your wallet into your dedicated savings plan shortly after the match concludes, and a notification alerts you to review your growing balance.',
+        a: 'The "Back Your Club" feature is an automated micro-savings nudge designed to turn football milestones into structured savings. During setup, you select the club you\u2019re backing for the season and authorize a fixed per-win saving amount \u2014 anywhere from \u20a61,000 up to \u20a61,000,000 (\u20a61,000, \u20a62,000, \u20a65,000, \u20a610,000, \u20a620,000, \u20a650,000, \u20a6100,000, \u20a6200,000, \u20a6500,000, or \u20a61,000,000). Every time your selected club secures an official match victory, our systems automatically move that designated amount from your wallet into your dedicated savings plan shortly after the match concludes, and a notification alerts you to review your growing balance. The plan runs until it matures on 31 May 2027.',
       },
       {
         q: 'When can I withdraw funds from my savings plan?',
-        a: 'Funds accumulated within the "Back Your Club" savings plan are held for the savings duration you selected at setup to discourage premature liquidations. When your selected term is reached, your funds become available for withdrawal or internal app transfer. Early liquidations are subject to standard administrative processing to ensure compliance with microfinance asset-liability rules.',
+        a: 'Your savings plan matures on 31 May 2027, when the full balance is available to withdraw or move within the app. You are not locked in until then, though: each amount you save has just a 10-day lockout, after which you are free to withdraw that money whenever you like.',
       },
     ],
   },

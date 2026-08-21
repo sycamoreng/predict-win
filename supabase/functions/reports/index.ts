@@ -91,7 +91,7 @@ Deno.serve(async (req: Request) => {
       savings: { fn: "report_savings", args: { p_campaign_id: activeCampaign } },
       leagues: { fn: "report_leagues", args: { p_campaign_id: activeCampaign } },
       groups: { fn: "report_groups", args: { p_campaign_id: activeCampaign } },
-      "monthly-rewards": {
+      rewards: {
         fn: "report_monthly_rewards",
         args: {
           p_campaign_id: activeCampaign,
