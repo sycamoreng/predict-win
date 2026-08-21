@@ -214,8 +214,8 @@ const chipInfoData: Record<string, { name: string; uses: string; description: st
   first_blood: {
     name: 'First Blood',
     uses: '3 uses per season',
-    description: 'A momentum chip. If the first match of the matchweek (by kickoff time) results in a correct prediction for you, a 1.5x bonus carries across all your remaining predictions that week.',
-    note: 'The bonus only kicks in if your FIRST prediction is correct. If it\'s wrong, no bonus applies to the rest.',
+    description: 'A momentum chip. Get the opening fixture of the matchweek (the earliest kickoff) right, and a 1.5x bonus carries across all your other predictions that week. If two or more matches share that earliest kickoff time, they all count as openers and you must call every one of them correctly to unlock the bonus.',
+    note: 'The bonus only kicks in if you correctly predict the opening fixture. When several matches kick off at the same earliest time, you must get them all right. Miss any opener and no bonus applies to the rest of the week. The opening fixtures themselves are the trigger, so they are not boosted.',
     bgClass: 'bg-red-100',
     iconClass: 'text-red-500',
   },
@@ -466,10 +466,16 @@ const loadSideQuests = async () => {
     .eq('status', 'open')
     .order('matchweek', { ascending: true })
     .limit(4)
-  activeSideQuests.value = q || []
+  // Only surface quests still genuinely open — exclude any whose lock time has
+  // already passed, otherwise the "unanswered this week" count includes quests
+  // the player can no longer answer.
+  const now = Date.now()
+  activeSideQuests.value = (q || []).filter(
+    (quest: any) => !quest.locks_at || new Date(quest.locks_at).getTime() > now,
+  )
 
-  if (user.value && q?.length) {
-    const questIds = q.map((quest: any) => quest.id)
+  if (user.value && activeSideQuests.value.length) {
+    const questIds = activeSideQuests.value.map((quest: any) => quest.id)
     const { data: e } = await supabase
       .from('side_quest_entries')
       .select('quest_id, answer')

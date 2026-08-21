@@ -44,7 +44,12 @@ onMounted(() => {
   trackPulseEvent('side_quests_viewed')
 })
 
-const activeQuests = computed(() => quests.value.filter((q) => q.status === 'open'))
+const activeQuests = computed(() =>
+  quests.value.filter((q) => q.status === 'open' && !isLocked(q)),
+)
+const lockedQuests = computed(() =>
+  quests.value.filter((q) => q.status === 'open' && isLocked(q)),
+)
 const resolvedQuests = computed(() => quests.value.filter((q) => q.status === 'resolved'))
 
 const isLocked = (quest: any) => {
@@ -187,8 +192,31 @@ const correctRate = computed(() => totalAnswered.value ? Math.round((totalCorrec
           </div>
         </div>
 
+        <!-- Locked, awaiting results -->
+        <div v-if="lockedQuests.length" class="space-y-4">
+          <h2 class="text-sm font-bold text-ink-700 uppercase tracking-wide">Locked — awaiting results</h2>
+          <div v-for="quest in lockedQuests" :key="quest.id" class="card p-4 space-y-2 opacity-90">
+            <div class="flex items-start justify-between">
+              <div class="flex items-center gap-2">
+                <img v-if="quest.options_meta?.player?.photo_url" :src="quest.options_meta.player.photo_url" :alt="quest.options_meta.player.name" class="w-9 h-9 rounded-full object-cover ring-2 ring-ink-200" />
+                <span v-else class="text-xl">{{ questTypeIcon(quest.quest_type) }}</span>
+                <div>
+                  <p class="text-sm font-bold text-ink-900">{{ quest.title }}</p>
+                  <p class="text-xs text-ink-500">MW {{ quest.matchweek }}</p>
+                </div>
+              </div>
+              <span class="text-xs font-bold text-ink-500 bg-ink-100 px-2 py-1 rounded-lg">Locked</span>
+            </div>
+            <div v-if="entries[quest.id]" class="bg-sky-50 rounded-xl px-3 py-2 flex items-center gap-2">
+              <svg class="w-4 h-4 text-sky-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+              <span class="text-xs font-semibold text-sky-700">Your pick: {{ getOptionLabel(quest, entries[quest.id].answer) }}</span>
+            </div>
+            <p v-else class="text-xs text-ink-400 italic">Entries closed — you didn't enter this one.</p>
+          </div>
+        </div>
+
         <!-- No active quests -->
-        <div v-else-if="!resolvedQuests.length" class="card p-8 text-center">
+        <div v-if="!activeQuests.length && !lockedQuests.length && !resolvedQuests.length" class="card p-8 text-center">
           <p class="text-4xl mb-3">🎮</p>
           <p class="text-sm font-semibold text-ink-700">No side quests yet</p>
           <p class="text-xs text-ink-500 mt-1">Side quests are generated at the start of each matchweek. Check back soon!</p>

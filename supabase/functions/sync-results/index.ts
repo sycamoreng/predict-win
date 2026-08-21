@@ -155,6 +155,13 @@ async function refreshUserCounters(userId: string, campaignId?: string | null) {
       .eq("user_id", userId)
       .eq("campaign_id", cid);
     for (const e of questEntries || []) bonus += e.points_awarded || 0;
+
+    const { data: chipBonuses } = await supabase
+      .from("chip_activations")
+      .select("bonus_awarded")
+      .eq("user_id", userId)
+      .eq("campaign_id", cid);
+    for (const cb of chipBonuses || []) bonus += cb.bonus_awarded || 0;
   }
 
   const total = base + bonus;
@@ -440,6 +447,48 @@ async function updateStreaksAndMilestones(match: any, preds: any[]) {
   }
 }
 
+const PERFECT_WEEK_BONUS = 50;
+
+// Awards the Perfect Week bonus once every match in the matchweek is complete:
+// the user must have a prediction for every fixture and have scored on all of them.
+async function evaluatePerfectWeek(campaignId: string, weekNumber: number, weekMatchIds: string[]) {
+  if (!campaignId || !weekNumber || weekMatchIds.length === 0) return;
+
+  const { data: activations } = await supabase
+    .from("chip_activations")
+    .select("id, user_id, bonus_awarded")
+    .eq("campaign_id", campaignId)
+    .eq("chip_type", "perfect_week")
+    .eq("week_number", weekNumber);
+
+  for (const act of activations || []) {
+    const { data: userPreds } = await supabase
+      .from("predictions")
+      .select("points_awarded, match_id")
+      .eq("user_id", act.user_id)
+      .in("match_id", weekMatchIds);
+
+    const predicted = userPreds || [];
+    const allMatchesCovered = predicted.length === weekMatchIds.length;
+    const allCorrect = predicted.length > 0 && predicted.every((r) => (r.points_awarded || 0) > 0);
+    const bonus = allMatchesCovered && allCorrect ? PERFECT_WEEK_BONUS : 0;
+
+    if (bonus !== (act.bonus_awarded || 0)) {
+      await supabase.from("chip_activations").update({ bonus_awarded: bonus }).eq("id", act.id);
+      if (bonus > 0) {
+        await supabase.from("notifications").insert({
+          user_id: act.user_id,
+          type: "chip_bonus",
+          title: `Perfect Week! +${bonus} bonus points`,
+          body: `You predicted every match in matchweek ${weekNumber} correctly and earned a ${bonus}-point Perfect Week bonus.`,
+          metadata: { chip_type: "perfect_week", week_number: weekNumber, bonus_points: bonus },
+        });
+      }
+    }
+    await refreshUserCounters(act.user_id, campaignId);
+  }
+}
+
 async function rescoreMatch(matchId: string) {
   const { data: match } = await supabase
     .from("matches")
@@ -479,6 +528,25 @@ async function rescoreMatch(matchId: string) {
     const kickoff = new Date(match.kickoff_at);
     const daysSince = Math.floor((kickoff.getTime() - anchor.getTime()) / (1000 * 60 * 60 * 24));
     matchWeekNumber = Math.floor(daysSince / 7) + 1;
+  }
+
+  // Opening fixture(s) of the matchweek — the trigger for First Blood. When several
+  // matches share the earliest kickoff, they all count as openers: First Blood only
+  // triggers if the user called every opener correctly, and openers are never boosted.
+  const openerIds = new Set<string>();
+  if (matchWeekNumber && match.campaign_id) {
+    const { data: weekMatches } = await supabase
+      .from("matches")
+      .select("id, kickoff_at")
+      .eq("campaign_id", match.campaign_id)
+      .eq("matchweek", matchWeekNumber)
+      .order("kickoff_at", { ascending: true });
+    const earliest = weekMatches?.[0]?.kickoff_at || null;
+    if (earliest) {
+      for (const m of weekMatches!) {
+        if (m.kickoff_at === earliest) openerIds.add(m.id);
+      }
+    }
   }
 
   for (const p of preds) {
@@ -528,9 +596,29 @@ async function rescoreMatch(matchId: string) {
     let finalPts = pts;
     const tcChip = chipActive?.chip_type === "triple_captain" && chipActive?.match_id === matchId;
     const ddChip = chipActive?.chip_type === "double_down";
+    const lsChip = chipActive?.chip_type === "last_stand";
+    const fbChip = chipActive?.chip_type === "first_blood";
+
+    // First Blood: if the user called every opening fixture correctly, a 1.5x bonus
+    // carries to their remaining predictions that week. Openers themselves are not boosted.
+    let fbBoost = false;
+    if (fbChip && openerIds.size > 0 && !openerIds.has(matchId)) {
+      const { data: openerPreds } = await supabase
+        .from("predictions")
+        .select("points_awarded, match_id")
+        .eq("user_id", p.user_id)
+        .in("match_id", [...openerIds]);
+      const covered = (openerPreds || []).length === openerIds.size;
+      const allCorrect = (openerPreds || []).length > 0 &&
+        (openerPreds || []).every((r) => (r.points_awarded || 0) > 0);
+      if (covered && allCorrect) fbBoost = true;
+    }
+
     if (pts > 0) {
       if (tcChip) finalPts = pts * 3;
       else if (ddChip) finalPts = pts * 2;
+      else if (lsChip) finalPts = pts * 4;
+      else if (fbBoost) finalPts = Math.round(pts * 1.5);
     }
 
     await supabase
@@ -741,6 +829,11 @@ async function rescoreMatch(matchId: string) {
       .eq("matchweek", match.matchweek);
     const allDone = weekMatches?.every((m) => m.status === "completed");
     if (allDone) {
+      await evaluatePerfectWeek(
+        match.campaign_id,
+        match.matchweek,
+        (weekMatches || []).map((m) => m.id),
+      );
       try {
         const resolveUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/side-quests/resolve`;
         await fetch(resolveUrl, {

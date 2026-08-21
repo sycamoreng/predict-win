@@ -717,7 +717,7 @@ const modes = [
               <p class="text-[11px] text-ink-400 font-medium">3 uses per season</p>
             </div>
           </div>
-          <p class="text-sm text-ink-600 leading-relaxed">Your first prediction is your pick for the matchweek's earliest kickoff. If you call that match's result correctly so it earns points, a <span class="font-bold text-red-500">1.5x bonus</span> carries across all your remaining matches that week.</p>
+          <p class="text-sm text-ink-600 leading-relaxed">The opening fixture is the matchweek's earliest kickoff. Call its result correctly and a <span class="font-bold text-red-500">1.5x bonus</span> carries across all your other matches that week. If two or more matches share that earliest kickoff time, they all count as openers and you must get every one of them right to unlock the bonus.</p>
         </div>
 
         <!-- Streak Shield -->
