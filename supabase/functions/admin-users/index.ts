@@ -196,11 +196,17 @@ Deno.serve(async (req: Request) => {
 
     if (mode === "acquisition") {
       if (!cid) return json({ totalOrganic: 0, neverTransacted: 0, becameActive: 0, conversionRate: 0 });
-      const base = () => supabase
-        .from("campaign_participants")
-        .select("user_id, synced_users!inner(is_staff, qualifying_transactions_count, active_customer_flag)", { count: "exact", head: true })
-        .eq("campaign_id", cid)
-        .eq("synced_users.is_staff", false);
+      const origin = String(body?.origin || "all");
+      const base = () => {
+        let q = supabase
+          .from("campaign_participants")
+          .select("user_id, synced_users!inner(is_staff, qualifying_transactions_count, active_customer_flag, signup_source)", { count: "exact", head: true })
+          .eq("campaign_id", cid)
+          .eq("synced_users.is_staff", false);
+        if (origin === "play" || origin === "sycamore") q = q.eq("synced_users.signup_source", origin);
+        q = withDate(q, range, "joined_at");
+        return q;
+      };
       const totalOrganic = (await base()).count || 0;
       const neverTransacted = (await base()
         .eq("synced_users.qualifying_transactions_count", 0)
@@ -216,21 +222,24 @@ Deno.serve(async (req: Request) => {
 
     if (mode === "acquisition-export") {
       if (!cid) return json({ rows: [] });
+      const origin = String(body?.origin || "all");
       const all: any[] = [];
       const PAGE = 1000;
       let offset = 0;
       while (true) {
-        const { data } = await supabase
+        let q = supabase
           .from("campaign_participants")
-          .select("user_id, synced_users!inner(id, email, name, username, phone_number, social_handles, created_at, total_points, backed_team_id, is_staff, qualifying_transactions_count, active_customer_flag)")
+          .select("joined_at, synced_users!inner(id, email, name, username, phone_number, social_handles, created_at, total_points, backed_team_id, is_staff, qualifying_transactions_count, active_customer_flag, signup_source)")
           .eq("campaign_id", cid)
           .eq("synced_users.is_staff", false)
           .eq("synced_users.qualifying_transactions_count", 0)
           .eq("synced_users.active_customer_flag", false)
-          .order("joined_at", { ascending: false })
-          .range(offset, offset + PAGE - 1);
+          .order("joined_at", { ascending: false });
+        if (origin === "play" || origin === "sycamore") q = q.eq("synced_users.signup_source", origin);
+        q = withDate(q, range, "joined_at");
+        const { data } = await q.range(offset, offset + PAGE - 1);
         if (!data || data.length === 0) break;
-        all.push(...data.map((r: any) => r.synced_users));
+        all.push(...data.map((r: any) => ({ ...r.synced_users, joined_at: r.joined_at })));
         if (data.length < PAGE) break;
         offset += PAGE;
       }

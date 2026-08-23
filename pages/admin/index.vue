@@ -1892,6 +1892,15 @@ const acquisitionData = ref<{
 } | null>(null)
 const acquisitionLoading = ref(false)
 const acquisitionExporting = ref(false)
+const acqDateFrom = ref('')
+const acqDateTo = ref('')
+const acqOrigin = ref<'all' | 'play' | 'sycamore'>('all')
+
+const acqRange = () => ({
+  from: acqDateFrom.value || null,
+  to: acqDateTo.value ? acqDateTo.value + 'T23:59:59' : null,
+  origin: acqOrigin.value,
+})
 
 const loadAcquisition = async () => {
   acquisitionLoading.value = true
@@ -1902,7 +1911,7 @@ const loadAcquisition = async () => {
       return
     }
 
-    acquisitionData.value = await call('admin-users', { mode: 'acquisition', campaign_id: cid })
+    acquisitionData.value = await call('admin-users', { mode: 'acquisition', campaign_id: cid, ...acqRange() })
   } catch (e) {
     error.value = (e as Error).message
   } finally {
@@ -1914,9 +1923,9 @@ const exportAcquisitionCsv = async () => {
   acquisitionExporting.value = true
   try {
     const cid = campaignConfig.value?.id || null
-    const { rows: allUsers = [] } = await call('admin-users', { mode: 'acquisition-export', campaign_id: cid })
+    const { rows: allUsers = [] } = await call('admin-users', { mode: 'acquisition-export', campaign_id: cid, ...acqRange() })
 
-    const headers = ['email', 'name', 'username', 'phone_number', 'twitter', 'instagram', 'threads', 'tiktok', 'total_points', 'joined']
+    const headers = ['email', 'name', 'username', 'phone_number', 'twitter', 'instagram', 'threads', 'tiktok', 'first_joined_via', 'total_points', 'joined']
     const csv = [headers.join(',')]
       .concat(allUsers.map((u) => [
         csvCell(u.email),
@@ -1927,8 +1936,9 @@ const exportAcquisitionCsv = async () => {
         csvCell(u.social_handles?.instagram || ''),
         csvCell(u.social_handles?.threads || ''),
         csvCell(u.social_handles?.tiktok || ''),
+        csvCell(u.signup_source === 'play' ? 'Predict app' : u.signup_source === 'sycamore' ? 'Sycamore sync' : ''),
         csvCell(u.total_points || 0),
-        csvCell(u.created_at?.slice(0, 10) || ''),
+        csvCell(u.joined_at?.slice(0, 10) || ''),
       ].join(',')))
       .join('\n')
 
@@ -1936,7 +1946,11 @@ const exportAcquisitionCsv = async () => {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `acquisition-organic-never-transacted.csv`
+    const dateSuffix = acqDateFrom.value || acqDateTo.value
+      ? `-${acqDateFrom.value || 'start'}-to-${acqDateTo.value || 'now'}`
+      : ''
+    const originSuffix = acqOrigin.value === 'play' ? '-predict-app' : acqOrigin.value === 'sycamore' ? '-sycamore-sync' : ''
+    a.download = `acquisition-never-transacted${originSuffix}${dateSuffix}.csv`
     a.click()
     URL.revokeObjectURL(url)
   } finally {
@@ -3557,18 +3571,57 @@ watch(activeTab, (tab) => {
 
           <!-- Acquisition (organic predictor signups) -->
           <div class="card p-5 space-y-4">
-            <div class="flex items-center justify-between">
+            <div class="flex items-center justify-between gap-3 flex-wrap">
               <div>
                 <h3 class="font-bold text-ink-900">Organic acquisition</h3>
                 <p class="text-sm text-ink-500">Players who joined {{ campaignConfig?.name || 'this campaign' }}, split by whether they have since transacted on Sycamore. “Became active” are active Sycamore customers or those with qualifying transactions.</p>
               </div>
-              <button
-                @click="exportAcquisitionCsv"
-                :disabled="acquisitionExporting || !acquisitionData"
-                class="pill bg-sky-100 text-sky-700 hover:bg-sky-200 text-xs shrink-0"
-              >
-                {{ acquisitionExporting ? 'Exporting...' : 'Export CSV' }}
-              </button>
+              <div class="flex items-end gap-2 flex-wrap">
+                <label class="flex flex-col text-[11px] font-semibold text-ink-500 uppercase tracking-wider">
+                  First joined via
+                  <select
+                    v-model="acqOrigin"
+                    @change="loadAcquisition"
+                    class="mt-1 rounded-lg border border-ink-200 px-2 py-1 text-sm text-ink-900 font-normal normal-case tracking-normal"
+                  >
+                    <option value="all">Any source</option>
+                    <option value="play">Predict app</option>
+                    <option value="sycamore">Sycamore sync</option>
+                  </select>
+                </label>
+                <label class="flex flex-col text-[11px] font-semibold text-ink-500 uppercase tracking-wider">
+                  Joined from
+                  <input
+                    v-model="acqDateFrom"
+                    type="date"
+                    @change="loadAcquisition"
+                    class="mt-1 rounded-lg border border-ink-200 px-2 py-1 text-sm text-ink-900 font-normal normal-case tracking-normal"
+                  />
+                </label>
+                <label class="flex flex-col text-[11px] font-semibold text-ink-500 uppercase tracking-wider">
+                  Joined to
+                  <input
+                    v-model="acqDateTo"
+                    type="date"
+                    @change="loadAcquisition"
+                    class="mt-1 rounded-lg border border-ink-200 px-2 py-1 text-sm text-ink-900 font-normal normal-case tracking-normal"
+                  />
+                </label>
+                <button
+                  v-if="acqDateFrom || acqDateTo || acqOrigin !== 'all'"
+                  @click="acqDateFrom = ''; acqDateTo = ''; acqOrigin = 'all'; loadAcquisition()"
+                  class="pill bg-ink-100 text-ink-600 hover:bg-ink-200 text-xs"
+                >
+                  Clear
+                </button>
+                <button
+                  @click="exportAcquisitionCsv"
+                  :disabled="acquisitionExporting || !acquisitionData"
+                  class="pill bg-sky-100 text-sky-700 hover:bg-sky-200 text-xs shrink-0"
+                >
+                  {{ acquisitionExporting ? 'Exporting...' : 'Export CSV' }}
+                </button>
+              </div>
             </div>
 
             <div v-if="acquisitionLoading && !acquisitionData" class="h-20 bg-ink-100/40 rounded-xl animate-pulse"></div>

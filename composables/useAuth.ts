@@ -250,7 +250,18 @@ export const useAuth = () => {
         user.value = data as SessionUser
         if (import.meta.client) localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
       }
-    } catch {
+    } catch (err: any) {
+      // A 401 from the profile check means our stored sign-in token is no longer
+      // valid (expired, or invalidated by a security change). Sign out cleanly so
+      // the player re-authenticates and receives a fresh token. Any other failure
+      // (network hiccup, server error) leaves the cached session untouched so a
+      // transient blip never logs anyone out.
+      if (err?.status === 401 && import.meta.client) {
+        logout()
+        const target = window.location.pathname + window.location.search
+        await navigateTo(`/login?redirect=${encodeURIComponent(target)}`)
+        return
+      }
       // Keep the cached session if the refresh could not complete.
     }
 

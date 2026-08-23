@@ -343,107 +343,106 @@ async function eliminateGroupStageTeams() {
   }
 }
 
-async function updateStreaksAndMilestones(match: any, preds: any[]) {
-  const campaignId = match.campaign_id;
+// Recompute a user's streak deterministically from their full chronological
+// history of completed-match predictions. This is order-independent and safe to
+// run repeatedly: it never double-counts on a re-sync and never clobbers a
+// correct streak the way an incremental per-match update can.
+async function recomputeUserStreak(userId: string, campaignId: string | null) {
   if (!campaignId) return;
 
-  // Group predictions by user and determine if they scored > 0
-  const userScored = new Map<string, boolean>();
-  for (const p of preds) {
-    userScored.set(p.user_id, (p.points_awarded || 0) > 0);
-  }
+  const { data: rows } = await supabase
+    .from("predictions")
+    .select("points_awarded, match:matches!predictions_match_id_fkey(id, matchweek, kickoff_at, status)")
+    .eq("user_id", userId)
+    .eq("campaign_id", campaignId);
 
-  // Check if user has streak_shield active this matchweek
-  const matchWeekNumber = match.matchweek || null;
+  const played = (rows || [])
+    .map((r: any) => ({ pts: r.points_awarded || 0, m: r.match }))
+    .filter((r: any) => r.m && r.m.status === "completed")
+    .sort((a: any, b: any) => String(a.m.kickoff_at).localeCompare(String(b.m.kickoff_at)));
 
-  for (const [userId, scored] of userScored) {
-    // Get or create streak record
-    let { data: streak } = await supabase
-      .from("user_streaks")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("campaign_id", campaignId)
-      .maybeSingle();
+  // Matchweeks in which the user held a streak shield — a miss that week does
+  // not break the streak.
+  const { data: shields } = await supabase
+    .from("chip_activations")
+    .select("week_number")
+    .eq("user_id", userId)
+    .eq("campaign_id", campaignId)
+    .eq("chip_type", "streak_shield");
+  const shieldedWeeks = new Set((shields || []).map((s: any) => s.week_number));
 
-    if (!streak) {
-      const { data: newStreak } = await supabase
-        .from("user_streaks")
-        .insert({ user_id: userId, campaign_id: campaignId, current_streak: 0, longest_streak: 0 })
-        .select("*")
-        .maybeSingle();
-      streak = newStreak;
-    }
-    if (!streak) continue;
+  const { data: milestones } = await supabase
+    .from("streak_milestones")
+    .select("id, threshold, bonus_points")
+    .eq("campaign_id", campaignId)
+    .order("threshold", { ascending: true });
 
-    const prevStreak = streak.current_streak;
+  let current = 0;
+  let longest = 0;
+  let lastMatchId: string | null = null;
 
-    if (scored) {
-      const newCurrent = prevStreak + 1;
-      const newLongest = Math.max(streak.longest_streak, newCurrent);
-      await supabase
-        .from("user_streaks")
-        .update({ current_streak: newCurrent, longest_streak: newLongest, last_match_id: match.id, updated_at: new Date().toISOString() })
-        .eq("id", streak.id);
-
-      // Check milestone rewards
-      const { data: milestones } = await supabase
-        .from("streak_milestones")
-        .select("id, threshold, bonus_points")
-        .eq("campaign_id", campaignId)
-        .gt("threshold", prevStreak)
-        .lte("threshold", newCurrent)
-        .order("threshold", { ascending: true });
+  for (const row of played) {
+    const prev = current;
+    if (row.pts > 0) {
+      current = prev + 1;
+      if (current > longest) longest = current;
 
       for (const ms of milestones || []) {
-        // Check if already claimed
-        const { data: existing } = await supabase
-          .from("streak_milestone_claims")
-          .select("id")
-          .eq("user_id", userId)
-          .eq("milestone_id", ms.id)
-          .maybeSingle();
-
-        if (!existing) {
-          await supabase.from("streak_milestone_claims").insert({
-            user_id: userId,
-            milestone_id: ms.id,
-            campaign_id: campaignId,
-          });
-          // The bonus lands in the player's total via refreshUserCounters, which
-          // sums all milestone claims — no manual increment here.
-
-          // Send notification
-          await supabase.from("notifications").insert({
-            user_id: userId,
-            type: "streak_milestone",
-            title: `${ms.threshold} Streak Milestone!`,
-            body: `You earned +${ms.bonus_points} bonus points for reaching a ${ms.threshold}-prediction streak!`,
-            metadata: { milestone_id: ms.id, threshold: ms.threshold, bonus_points: ms.bonus_points, streak: newCurrent },
-          });
+        if (ms.threshold > prev && ms.threshold <= current) {
+          const { data: existing } = await supabase
+            .from("streak_milestone_claims")
+            .select("id")
+            .eq("user_id", userId)
+            .eq("milestone_id", ms.id)
+            .maybeSingle();
+          if (!existing) {
+            // The bonus lands in the player's total via refreshUserCounters,
+            // which sums all milestone claims — no manual increment here.
+            await supabase.from("streak_milestone_claims").insert({
+              user_id: userId,
+              milestone_id: ms.id,
+              campaign_id: campaignId,
+            });
+            await supabase.from("notifications").insert({
+              user_id: userId,
+              type: "streak_milestone",
+              title: `${ms.threshold} Streak Milestone!`,
+              body: `You earned +${ms.bonus_points} bonus points for reaching a ${ms.threshold}-prediction streak!`,
+              metadata: { milestone_id: ms.id, threshold: ms.threshold, bonus_points: ms.bonus_points, streak: current },
+            });
+          }
         }
       }
-    } else {
-      // Check for streak_shield chip before resetting
-      let shielded = false;
-      if (matchWeekNumber) {
-        const { data: shield } = await supabase
-          .from("chip_activations")
-          .select("id")
-          .eq("user_id", userId)
-          .eq("campaign_id", campaignId)
-          .eq("chip_type", "streak_shield")
-          .eq("week_number", matchWeekNumber)
-          .maybeSingle();
-        if (shield) shielded = true;
-      }
-
-      if (!shielded) {
-        await supabase
-          .from("user_streaks")
-          .update({ current_streak: 0, last_match_id: match.id, updated_at: new Date().toISOString() })
-          .eq("id", streak.id);
-      }
+    } else if (!shieldedWeeks.has(row.m.matchweek)) {
+      current = 0;
     }
+    lastMatchId = row.m.id;
+  }
+
+  const { data: existingStreak } = await supabase
+    .from("user_streaks")
+    .select("id, longest_streak")
+    .eq("user_id", userId)
+    .eq("campaign_id", campaignId)
+    .maybeSingle();
+
+  const finalLongest = Math.max(longest, existingStreak?.longest_streak || 0);
+
+  if (existingStreak) {
+    await supabase.from("user_streaks").update({
+      current_streak: current,
+      longest_streak: finalLongest,
+      last_match_id: lastMatchId,
+      updated_at: new Date().toISOString(),
+    }).eq("id", existingStreak.id);
+  } else {
+    await supabase.from("user_streaks").insert({
+      user_id: userId,
+      campaign_id: campaignId,
+      current_streak: current,
+      longest_streak: finalLongest,
+      last_match_id: lastMatchId,
+    });
   }
 }
 
@@ -626,6 +625,9 @@ async function rescoreMatch(matchId: string) {
       .update({ points_awarded: finalPts, scored: true })
       .eq("id", p.id);
 
+    p.points_awarded = finalPts;
+    p.scored = true;
+
     const u = p.user as any;
     const homeTeam = (match.home_team as any).name || (match.home_team as any).code;
     const awayTeam = (match.away_team as any).name || (match.away_team as any).code;
@@ -796,12 +798,12 @@ async function rescoreMatch(matchId: string) {
     }
   }
 
-  // Update streaks and record milestone claims first, so the counter refresh
-  // below picks up any freshly-earned bonus points.
-  await updateStreaksAndMilestones(match, preds);
-
+  // Recompute each affected user's streak from their full history (order-safe),
+  // then refresh their counters so any freshly-earned milestone bonus is picked
+  // up in the total.
   const userIds = [...new Set(preds.map((p) => p.user_id))];
   for (const uid of userIds) {
+    await recomputeUserStreak(uid, match.campaign_id);
     await refreshUserCounters(uid, match.campaign_id);
   }
 
@@ -1084,11 +1086,50 @@ async function syncResults(league: number, season: number) {
     }
 
     await recordGoalscorers(dbMatch, events);
-    await rescoreMatch(dbMatch.id);
+    try {
+      await rescoreMatch(dbMatch.id);
+    } catch (err) {
+      // Don't let one match's failure abort the whole sync and leave other
+      // matches' totals stale — the reconciliation pass below will converge them.
+      pulseTrack("system", "rescore_match_failed", {
+        match_id: dbMatch.id,
+        match: `${dbMatch.home_team.code}-${dbMatch.away_team.code}`,
+        error: (err as Error).message,
+      });
+    }
     updated.push(`${dbMatch.home_team.code} ${fixture.goals.home}-${fixture.goals.away} ${dbMatch.away_team.code}`);
   }
 
+  // Safety net: recompute every participant's stored totals and streak straight
+  // from their raw predictions, so a mid-sync failure can never leave a stale
+  // partial total behind.
+  if (targetCampaign?.id) {
+    await reconcileCampaign(targetCampaign.id);
+  }
+
   return { updated, skipped, finished_fixtures: finished.length };
+}
+
+// Recompute totals and streaks for every user with a prediction in a campaign.
+// Idempotent and defensive: one user's failure never blocks the rest.
+async function reconcileCampaign(campaignId: string) {
+  const { data: rows } = await supabase
+    .from("predictions")
+    .select("user_id")
+    .eq("campaign_id", campaignId);
+  const userIds = [...new Set((rows || []).map((r: any) => r.user_id))];
+  for (const uid of userIds) {
+    try {
+      await recomputeUserStreak(uid, campaignId);
+      await refreshUserCounters(uid, campaignId);
+    } catch (err) {
+      pulseTrack("system", "reconcile_user_failed", {
+        user_id: uid,
+        campaign_id: campaignId,
+        error: (err as Error).message,
+      });
+    }
+  }
 }
 
 async function recordGoalscorers(dbMatch: any, events: ApiEvent[]) {
